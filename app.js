@@ -45,6 +45,7 @@
   let waypointGroup;
   let markerToggleControl;
   let toggleContainer;
+  let helpPopupEl;
   let routeTotal = 0;
 
   const defaults = {
@@ -656,6 +657,25 @@
     return legendContainer;
   }
 
+  function initHelp() {
+    const trigger = document.getElementById("help-trigger");
+    if (!trigger) return;
+    helpPopupEl = document.createElement("div");
+    helpPopupEl.className = "help-popup hidden";
+    helpPopupEl.innerHTML =
+      "<strong>Live Tracker Tips</strong><br>Select a participant to see live ETAs to waypoints. Right-click or long-press the map for Google Maps/Waze/coords and ETA to that point.";
+    document.body.appendChild(helpPopupEl);
+    const hide = () => helpPopupEl.classList.add("hidden");
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      helpPopupEl.classList.toggle("hidden");
+    });
+    document.addEventListener("click", (e) => {
+      if (e.target === trigger || helpPopupEl.contains(e.target)) return;
+      hide();
+    });
+  }
+
   function hideContextMenu() {
     if (contextMenuEl) {
       contextMenuEl.classList.add("hidden");
@@ -679,7 +699,7 @@
     contextMenuEl.innerHTML = "";
     if (selectedDeviceId && routePoints.length) {
       const targetProj = projectOnRoute(latlng);
-      if (targetProj) {
+      if (targetProj && !targetProj.offtrack) {
         const eta = computeEta(selectedDeviceId, targetProj.distanceAlong);
         const info = document.createElement("div");
         info.className = "context-info";
@@ -736,6 +756,7 @@
     contextMenuEl.className = "context-menu hidden";
     document.body.appendChild(contextMenuEl);
     document.addEventListener("click", hideContextMenu);
+    initHelp();
     if (!map) return;
     const container = map.getContainer();
     const longPressMs = 600;
@@ -897,24 +918,25 @@
       const btn = document.createElement("button");
       btn.className = "legend-btn";
       btn.dataset.deviceId = String(device.id);
-    if (device.id === selectedDeviceId) btn.classList.add("selected");
-    const dot = document.createElement("span");
-    dot.className = `legend-dot ${isStale(device.id) ? "stale" : "live"}`;
-    const label = document.createElement("span");
-    const name = device.name || `Device ${device.id}`;
-    const ts = formatTimeLabel(lastSeen.get(device.id));
-    const prog = getDeviceProgress(device.id);
-    const offRoute = !prog || prog.offtrack;
-    const km = !offRoute && prog
-      ? `${Math.round((prog.proj.distanceAlong / 1000) * 10) / 10} km`
-      : null;
-    const suffix = offRoute ? " • off-route" : km ? ` • ${km}` : "";
-    label.textContent = ts ? `${name} (${ts})${suffix}` : `${name}${suffix}`;
-    btn.append(dot, label);
+      if (device.id === selectedDeviceId) btn.classList.add("selected");
+      const dot = document.createElement("span");
+      dot.className = `legend-dot ${isStale(device.id) ? "stale" : "live"}`;
+      const label = document.createElement("span");
+      const name = device.name || `Device ${device.id}`;
+      const ts = formatTimeLabel(lastSeen.get(device.id));
+      const prog = getDeviceProgress(device.id);
+      const offRoute = !prog || prog.offtrack;
+      const km = !offRoute && prog
+        ? `${Math.round((prog.proj.distanceAlong / 1000) * 10) / 10} km`
+        : null;
+      const suffix = offRoute ? " • off-route" : km ? ` • ${km}` : "";
+      label.textContent = ts ? `${name} (${ts})${suffix}` : `${name}${suffix}`;
+      btn.append(dot, label);
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
         selectDevice(device.id, { focus: true });
+        focusDevice(device.id);
       });
       item.appendChild(btn);
       container.appendChild(item);
