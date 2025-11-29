@@ -51,6 +51,7 @@
   let langSelector;
   let currentLanguage;
   let downloadButton;
+  let userPreferences;
 
   const LANGUAGE_COOKIE = "tracker_lang";
 
@@ -59,7 +60,7 @@
     refreshSeconds: 10,
     deviceIds: null,
     kmMarkerInterval: 1,
-    showViewerLocation: true,
+    showViewerLocation: false,
     staleMinutes: 15,
     startTime: null,
     showKmMarkers: true,
@@ -84,6 +85,7 @@
     openGoogle: "Open in Google Maps",
     openWaze: "Open in Waze",
     you: "You",
+    toggleYou: "Show your location",
     downloadGpx: "Download GPX",
   };
 
@@ -194,6 +196,7 @@
         ...defaults,
         ...cfg,
       };
+      applySavedTogglePreferences();
       texts = { ...defaultTexts };
       setStatus("");
       const pageTitle = config.title || defaults.title;
@@ -203,6 +206,7 @@
       renderWaypoints();
       renderToggles();
       renderLegend();
+      persistToggles();
     } catch (err) {
       setStatus("");
     }
@@ -234,7 +238,8 @@
   }
 
   async function loadTranslations(preferredLang) {
-    const savedLang = preferredLang || getCookie(LANGUAGE_COOKIE);
+    const prefs = readPreferences();
+    const savedLang = preferredLang || prefs.lang;
     const browserLang = (navigator.language || "en").slice(0, 2).toLowerCase();
     const targetLang =
       savedLang ||
@@ -251,7 +256,10 @@
       path = translationsMap.en || "translations/en.json";
       currentLanguage = "en";
     }
-    setCookie(LANGUAGE_COOKIE, currentLanguage);
+    persistPreferences({
+      lang: currentLanguage,
+      toggles: prefs.toggles,
+    });
     try {
       const res = await fetch(path, { cache: "no-store" });
       if (!res.ok) throw new Error("no translation file");
@@ -689,6 +697,7 @@
 
   function startViewerLocation() {
     if (!config?.showViewerLocation || !("geolocation" in navigator)) return;
+    if (viewerWatchId != null) return;
     const opts = { enableHighAccuracy: true, maximumAge: 15000, timeout: 10000 };
     const onPos = (pos) => {
       const { latitude, longitude, accuracy } = pos.coords;
@@ -760,7 +769,7 @@
     if (!langSelector) return;
     langSelector.addEventListener("change", async (e) => {
       const code = e.target.value;
-      setCookie(LANGUAGE_COOKIE, code);
+      persistPreferences({ lang: code });
       await loadTranslations(code);
       renderToggles();
     });
@@ -785,6 +794,52 @@
   function setCookie(name, value, days = 365) {
     const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
     document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
+  }
+
+  function readPreferences() {
+    if (userPreferences) return userPreferences;
+    const raw = getCookie(LANGUAGE_COOKIE);
+    if (!raw) {
+      userPreferences = {};
+      return userPreferences;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        userPreferences = parsed;
+        return userPreferences;
+      }
+    } catch (e) {
+      // fall through to legacy value handling
+    }
+    userPreferences = { lang: raw };
+    return userPreferences;
+  }
+
+  function persistPreferences(partial) {
+    const current = readPreferences();
+    const merged = { ...current, ...partial };
+    userPreferences = merged;
+    setCookie(LANGUAGE_COOKIE, JSON.stringify(merged));
+  }
+
+  function persistToggles() {
+    persistPreferences({
+      toggles: {
+        showKmMarkers: Boolean(config?.showKmMarkers),
+        showWaypoints: Boolean(config?.showWaypoints),
+        showViewerLocation: Boolean(config?.showViewerLocation),
+      },
+    });
+  }
+
+  function applySavedTogglePreferences() {
+    const prefs = readPreferences();
+    const toggles = prefs?.toggles;
+    if (!toggles || typeof toggles !== "object") return;
+    if (typeof toggles.showKmMarkers === "boolean") config.showKmMarkers = toggles.showKmMarkers;
+    if (typeof toggles.showWaypoints === "boolean") config.showWaypoints = toggles.showWaypoints;
+    if (typeof toggles.showViewerLocation === "boolean") config.showViewerLocation = toggles.showViewerLocation;
   }
 
   function initDownloadButton() {
@@ -944,6 +999,17 @@
     autoFit = false;
     map.setView(viewerMarker.getLatLng(), Math.max(map.getZoom(), 15));
     viewerMarker.openPopup();
+  }
+
+  function stopViewerLocation() {
+    if (viewerWatchId != null && navigator.geolocation?.clearWatch) {
+      navigator.geolocation.clearWatch(viewerWatchId);
+    }
+    viewerWatchId = null;
+    if (viewerMarker) {
+      viewerMarker.remove();
+      viewerMarker = null;
+    }
   }
 
   function ensureEtaControl() {
@@ -1114,6 +1180,7 @@
     kmCb.addEventListener("change", () => {
       config.showKmMarkers = kmCb.checked;
       rebuildKmMarkers();
+      persistToggles();
     });
     kmRow.append(kmCb, document.createTextNode(` ${t("toggleKm")}`));
     toggleContainer.appendChild(kmRow);
@@ -1126,9 +1193,25 @@
     wpCb.addEventListener("change", () => {
       config.showWaypoints = wpCb.checked;
       renderWaypoints();
+      persistToggles();
     });
     wpRow.append(wpCb, document.createTextNode(` ${t("toggleWp")}`));
     toggleContainer.appendChild(wpRow);
+
+    const youRow = document.createElement("label");
+    youRow.className = "toggle-row";
+    const youCb = document.createElement("input");
+    youCb.type = "checkbox";
+    youCb.checked = Boolean(config?.showViewerLocation);
+    youCb.addEventListener("change", () => {
+      config.showViewerLocation = youCb.checked;
+      if (youCb.checked) startViewerLocation();
+      else stopViewerLocation();
+      renderLegend();
+      persistToggles();
+    });
+    youRow.append(youCb, document.createTextNode(` ${t("toggleYou")}`));
+    toggleContainer.appendChild(youRow);
   }
 
   function selectDevice(deviceId, { focus = false } = {}) {
