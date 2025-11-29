@@ -1,0 +1,171 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  color: #0f172a;
+  background: #f5f7fb;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(120deg, #0f5faf, #0c8bc7);
+  color: #f7fbff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.title {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.status {
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+.layout {
+  flex: 1;
+  display: flex;
+  padding: 0.75rem;
+  height: calc(100vh - 56px);
+}
+
+#map {
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.error {
+  color: #b00020;
+}
+
+.muted {
+  color: #6b7280;
+}
+
+.km-label {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #e5e9f0;
+  color: #0f172a;
+  border-radius: 6px;
+  padding: 1px 5px;
+  font-size: 0.8rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.legend-control {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e5e9f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  font-size: 0.9rem;
+  display: grid;
+  gap: 6px;
+}
+
+.legend-control .legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-control .legend-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  border-radius: 6px;
+}
+
+.legend-control .legend-btn:hover {
+  background: rgba(15, 95, 175, 0.08);
+}
+
+.legend-control .legend-dot {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+}
+
+.legend-control .legend-dot.live {
+  background: #0c8bc7;
+  border-color: #0c8bc7;
+}
+
+.legend-control .legend-dot.stale {
+  background: #9ca3af;
+  border-color: #6b7280;
+}
+
+.legend-control .legend-dot.you {
+  background: #22c55e;
+  border-color: #16a34a;
+}
+
+.context-menu {
+  position: absolute;
+  z-index: 1000;
+  background: #ffffff;
+  border: 1px solid #e5e9f0;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+  padding: 6px 0;
+  min-width: 180px;
+}
+
+.context-menu.hidden {
+  display: none;
+}
+
+.context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.context-menu button:hover {
+  background: rgba(15, 95, 175, 0.08);
+}
+
+@media (max-width: 960px) {
+  .layout {
+    padding: 0.5rem;
+    height: auto;
+  }
+
+  #map {
+    min-height: 320px;
+  }
+}

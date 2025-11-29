@@ -1,0 +1,11 @@
+{
+  "name": "live-traccar",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "tracks": "node scripts/generate-manifest.js"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4"
+  }
+}

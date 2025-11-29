@@ -1,0 +1,10 @@
+{
+  "title": "Live Tracker",
+  "traccarUrl": "https://your-traccar.example.com",
+  "token": "REPLACE_WITH_API_TOKEN",
+  "refreshSeconds": 8,
+  "deviceIds": [1, 2, 3],
+  "kmMarkerInterval": 1,
+  "showViewerLocation": true,
+  "staleMinutes": 15
+}
