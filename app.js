@@ -47,6 +47,7 @@
   let toggleContainer;
   let helpPopupEl;
   let routeTotal = 0;
+  let texts;
 
   const defaults = {
     title: "Live Tracker",
@@ -60,6 +61,24 @@
     showWaypoints: true,
     debug: false,
   };
+
+  const defaultTexts = {
+    eta: "ETA",
+    etaHere: "ETA here: {eta}",
+    passed: "passed",
+    offtrack: "participant not on track",
+    unknown: "unknown",
+    next: "Next",
+    offrouteLabel: "off-route",
+    helpTip:
+      "Select a participant to see live ETAs to waypoints. Right-click or long-press the map for Google Maps/Waze/coords and ETA to that point.",
+    helpTitle: "Live Tracker Tips",
+  };
+
+  function t(key, vars = {}) {
+    const str = (texts && texts[key]) || defaultTexts[key] || key;
+    return Object.keys(vars).reduce((acc, k) => acc.replace(`{${k}}`, vars[k]), str);
+  }
 
   function nextColor() {
     const color = colors[colorIdx % colors.length];
@@ -154,6 +173,7 @@
         ...defaults,
         ...cfg,
       };
+      texts = { ...defaultTexts };
       setStatus("Config loaded");
       const pageTitle = config.title || defaults.title;
       titleEl.textContent = pageTitle;
@@ -190,6 +210,18 @@
       desc: wpt.querySelector("desc")?.textContent?.trim(),
     }));
     return { segments, waypoints };
+  }
+
+  async function loadTranslations() {
+    const path = config?.translationFile || "translations/en.json";
+    try {
+      const res = await fetch(path, { cache: "no-store" });
+      if (!res.ok) throw new Error("no translation file");
+      const data = await res.json();
+      texts = { ...defaultTexts, ...data };
+    } catch (err) {
+      texts = { ...defaultTexts };
+    }
   }
 
   function addKmMarkersForSegments(segments, color, intervalKm) {
@@ -384,16 +416,16 @@
       const etaText =
         eta?.status === "eta" && eta.arrival
           ? formatDateTimeFull(eta.arrival)
-        : eta?.status === "passed"
-            ? "passed"
+          : eta?.status === "passed"
+            ? t("passed")
             : eta?.status === "offtrack"
-              ? "participant not on track"
-              : "unknown";
+              ? t("offtrack")
+              : t("unknown");
       marker.on("click", () => {
         const idx = routeWaypoints.indexOf(wp);
         const next = idx >= 0 && idx < routeWaypoints.length - 1 ? routeWaypoints[idx + 1] : null;
         const nextLabel = next ? next.name : "Finish";
-        const popupHtml = `<strong>${wp.name}</strong><br>ETA: ${etaText}<br><span class="muted">Next: ${nextLabel}</span>`;
+        const popupHtml = `<strong>${wp.name}</strong><br>${t("eta")}: ${etaText}<br><span class="muted">${t("next")}: ${nextLabel}</span>`;
         marker.bindPopup(popupHtml).openPopup();
       });
     });
@@ -662,8 +694,7 @@
     if (!trigger) return;
     helpPopupEl = document.createElement("div");
     helpPopupEl.className = "help-popup hidden";
-    helpPopupEl.innerHTML =
-      "<strong>Live Tracker Tips</strong><br>Select a participant to see live ETAs to waypoints. Right-click or long-press the map for Google Maps/Waze/coords and ETA to that point.";
+    helpPopupEl.innerHTML = `<strong>${t("helpTitle") || "Live Tracker Tips"}</strong><br>${t("helpTip")}`;
     document.body.appendChild(helpPopupEl);
     const hide = () => helpPopupEl.classList.add("hidden");
     trigger.addEventListener("click", (e) => {
@@ -707,11 +738,11 @@
           eta.status === "eta" && eta.arrival
             ? formatDateTimeFull(eta.arrival)
             : eta.status === "passed"
-              ? "passed"
+              ? t("passed")
               : eta.status === "offtrack"
-                ? "participant not on track"
-                : "unknown";
-        info.textContent = `ETA here: ${etaText}`;
+                ? t("offtrack")
+                : t("unknown");
+        info.textContent = t("etaHere", { eta: etaText });
         contextMenuEl.appendChild(info);
       }
     }
@@ -1032,6 +1063,7 @@
     initMap();
     initContextMenu();
     await loadConfig();
+    await loadTranslations();
     await loadRoute();
     await startPolling();
     startViewerLocation();
