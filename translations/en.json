@@ -7,5 +7,12 @@
   "next": "Next",
   "offrouteLabel": "off-route",
   "helpTip": "Select a participant to see live ETAs to waypoints. Right-click or long-press the map for Google Maps/Waze/coords and ETA to that point.",
-  "helpTitle": "Live Tracker Tips"
+  "helpTitle": "Live Tracker Tips",
+  "toggleKm": "Show km markers",
+  "toggleWp": "Show waypoints",
+  "copyCoords": "Copy coordinates",
+  "openGoogle": "Open in Google Maps",
+  "openWaze": "Open in Waze",
+  "you": "You",
+  "downloadGpx": "Download GPX"
 }

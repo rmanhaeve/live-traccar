@@ -48,6 +48,11 @@
   let helpPopupEl;
   let routeTotal = 0;
   let texts;
+  let langSelector;
+  let currentLanguage;
+  let downloadButton;
+
+  const LANGUAGE_COOKIE = "tracker_lang";
 
   const defaults = {
     title: "Live Tracker",
@@ -73,6 +78,19 @@
     helpTip:
       "Select a participant to see live ETAs to waypoints. Right-click or long-press the map for Google Maps/Waze/coords and ETA to that point.",
     helpTitle: "Live Tracker Tips",
+    toggleKm: "Show km markers",
+    toggleWp: "Show waypoints",
+    copyCoords: "Copy coordinates",
+    openGoogle: "Open in Google Maps",
+    openWaze: "Open in Waze",
+    you: "You",
+    downloadGpx: "Download GPX",
+  };
+
+  const translationsMap = {
+    en: "translations/en.json",
+    nl: "translations/nl.json",
+    sv: "translations/sv.json",
   };
 
   function t(key, vars = {}) {
@@ -87,8 +105,11 @@
   }
 
   function setStatus(text, isError = false) {
-    statusEl.textContent = text;
-    statusEl.classList.toggle("error", Boolean(isError));
+    if (isError && text) {
+      // Use an alert for visibility when errors occur; no status shown otherwise.
+      // eslint-disable-next-line no-alert
+      alert(text);
+    }
   }
 
   function initMap() {
@@ -174,7 +195,7 @@
         ...cfg,
       };
       texts = { ...defaultTexts };
-      setStatus("Config loaded");
+      setStatus("");
       const pageTitle = config.title || defaults.title;
       titleEl.textContent = pageTitle;
       document.title = pageTitle;
@@ -183,7 +204,7 @@
       renderToggles();
       renderLegend();
     } catch (err) {
-      setStatus("Add config.json (see config.example.json)", true);
+      setStatus("");
     }
   }
 
@@ -212,8 +233,25 @@
     return { segments, waypoints };
   }
 
-  async function loadTranslations() {
-    const path = config?.translationFile || "translations/en.json";
+  async function loadTranslations(preferredLang) {
+    const savedLang = preferredLang || getCookie(LANGUAGE_COOKIE);
+    const browserLang = (navigator.language || "en").slice(0, 2).toLowerCase();
+    const targetLang =
+      savedLang ||
+      Object.keys(translationsMap).find((code) => code === browserLang) ||
+      null;
+    let path;
+    if (targetLang && translationsMap[targetLang]) {
+      path = translationsMap[targetLang];
+      currentLanguage = targetLang;
+    } else if (config?.translationFile) {
+      path = config.translationFile;
+      currentLanguage = targetLang || "en";
+    } else {
+      path = translationsMap.en || "translations/en.json";
+      currentLanguage = "en";
+    }
+    setCookie(LANGUAGE_COOKIE, currentLanguage);
     try {
       const res = await fetch(path, { cache: "no-store" });
       if (!res.ok) throw new Error("no translation file");
@@ -222,6 +260,12 @@
     } catch (err) {
       texts = { ...defaultTexts };
     }
+    updateLangSelector();
+    updateHelpContent();
+    updateDownloadButtonLabel();
+    renderLegend();
+    renderWaypoints();
+    renderToggles();
   }
 
   function addKmMarkersForSegments(segments, color, intervalKm) {
@@ -596,7 +640,6 @@
     renderLegend();
     renderWaypoints();
     fitToData();
-    setStatus(`Last update ${new Date().toLocaleTimeString()}`);
   }
 
   function buildDebugPositions() {
@@ -659,11 +702,11 @@
           weight: 2,
           pane: "viewerPane",
         }).addTo(map);
-        viewerMarker.bindTooltip("You", { direction: "top", offset: [0, -4] });
+        viewerMarker.bindTooltip(t("you"), { direction: "top", offset: [0, -4] });
       } else {
         viewerMarker.setLatLng(latlng);
       }
-      viewerMarker.setPopupContent(`You<br><span class="muted">±${Math.round(accuracy)} m</span>`);
+      viewerMarker.setPopupContent(`${t("you")}<br><span class="muted">±${Math.round(accuracy)} m</span>`);
       viewerMarker.bringToFront();
       extendBounds(latlng);
       fitToData();
@@ -694,7 +737,7 @@
     if (!trigger) return;
     helpPopupEl = document.createElement("div");
     helpPopupEl.className = "help-popup hidden";
-    helpPopupEl.innerHTML = `<strong>${t("helpTitle") || "Live Tracker Tips"}</strong><br>${t("helpTip")}`;
+    updateHelpContent();
     document.body.appendChild(helpPopupEl);
     const hide = () => helpPopupEl.classList.add("hidden");
     trigger.addEventListener("click", (e) => {
@@ -705,6 +748,63 @@
       if (e.target === trigger || helpPopupEl.contains(e.target)) return;
       hide();
     });
+  }
+
+  function updateHelpContent() {
+    if (!helpPopupEl) return;
+    helpPopupEl.innerHTML = `<strong>${t("helpTitle")}</strong><br>${t("helpTip")}`;
+  }
+
+  function initLangSelector() {
+    langSelector = document.getElementById("lang-select");
+    if (!langSelector) return;
+    langSelector.addEventListener("change", async (e) => {
+      const code = e.target.value;
+      setCookie(LANGUAGE_COOKIE, code);
+      await loadTranslations(code);
+      renderToggles();
+    });
+    updateLangSelector();
+  }
+
+  function updateLangSelector() {
+    if (!langSelector) return;
+    const fallback = "en";
+    const desired = currentLanguage || fallback;
+    const values = Array.from(langSelector.options).map((opt) => opt.value);
+    langSelector.value = values.includes(desired) ? desired : fallback;
+  }
+
+  function getCookie(name) {
+    const parts = document.cookie.split(";").map((c) => c.trim());
+    const match = parts.find((c) => c.startsWith(`${name}=`));
+    if (!match) return null;
+    return decodeURIComponent(match.slice(name.length + 1));
+  }
+
+  function setCookie(name, value, days = 365) {
+    const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
+    document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
+  }
+
+  function initDownloadButton() {
+    downloadButton = document.getElementById("download-gpx");
+    if (!downloadButton) return;
+    downloadButton.addEventListener("click", () => {
+      const trackFile = config?.trackFile || "tracks/track.gpx";
+      const link = document.createElement("a");
+      link.href = trackFile;
+      link.download = trackFile.split("/").pop() || "track.gpx";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    });
+    updateDownloadButtonLabel();
+  }
+
+  function updateDownloadButtonLabel() {
+    if (!downloadButton) return;
+    downloadButton.textContent = t("downloadGpx");
   }
 
   function hideContextMenu() {
@@ -748,7 +848,7 @@
     }
     const items = [
       {
-        label: "Open in Google Maps",
+        label: t("openGoogle"),
         action: () =>
           window.open(
             `https://www.google.com/maps/search/?api=1&query=${latlng.lat},${latlng.lng}`,
@@ -756,12 +856,12 @@
           ),
       },
       {
-        label: "Open in Waze",
+        label: t("openWaze"),
         action: () =>
           window.open(`https://waze.com/ul?ll=${latlng.lat},${latlng.lng}&navigate=yes`, "_blank"),
       },
       {
-        label: "Copy coordinates",
+        label: t("copyCoords"),
         action: () => copyCoords(latlng),
       },
     ];
@@ -955,13 +1055,13 @@
       const label = document.createElement("span");
       const name = device.name || `Device ${device.id}`;
       const ts = formatTimeLabel(lastSeen.get(device.id));
-      const prog = getDeviceProgress(device.id);
-      const offRoute = !prog || prog.offtrack;
-      const km = !offRoute && prog
-        ? `${Math.round((prog.proj.distanceAlong / 1000) * 10) / 10} km`
-        : null;
-      const suffix = offRoute ? " • off-route" : km ? ` • ${km}` : "";
-      label.textContent = ts ? `${name} (${ts})${suffix}` : `${name}${suffix}`;
+    const prog = getDeviceProgress(device.id);
+    const offRoute = !prog || prog.offtrack;
+    const km = !offRoute && prog
+      ? `${Math.round((prog.proj.distanceAlong / 1000) * 10) / 10} km`
+      : null;
+    const suffix = offRoute ? ` • ${t("offrouteLabel")}` : km ? ` • ${km}` : "";
+    label.textContent = ts ? `${name} (${ts})${suffix}` : `${name}${suffix}`;
       btn.append(dot, label);
       btn.addEventListener("click", (e) => {
         e.preventDefault();
@@ -981,7 +1081,7 @@
       const dot = document.createElement("span");
       dot.className = "legend-dot you";
       const label = document.createElement("span");
-      label.textContent = "You";
+      label.textContent = t("you");
       btn.append(dot, label);
       btn.addEventListener("click", (e) => {
         e.preventDefault();
@@ -1015,7 +1115,7 @@
       config.showKmMarkers = kmCb.checked;
       rebuildKmMarkers();
     });
-    kmRow.append(kmCb, document.createTextNode(" Show km markers"));
+    kmRow.append(kmCb, document.createTextNode(` ${t("toggleKm")}`));
     toggleContainer.appendChild(kmRow);
 
     const wpRow = document.createElement("label");
@@ -1027,7 +1127,7 @@
       config.showWaypoints = wpCb.checked;
       renderWaypoints();
     });
-    wpRow.append(wpCb, document.createTextNode(" Show waypoints"));
+    wpRow.append(wpCb, document.createTextNode(` ${t("toggleWp")}`));
     toggleContainer.appendChild(wpRow);
   }
 
@@ -1043,18 +1143,18 @@
     if ((!config?.token || !config?.traccarUrl) && !config?.debug) return;
     await refreshDevices().catch((err) => {
       console.error(err);
-      setStatus("Device fetch failed", true);
+      setStatus("");
     });
     await refreshPositions().catch((err) => {
       console.error(err);
-      setStatus("Position fetch failed", true);
+      setStatus("");
     });
     renderToggles();
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(() => {
       refreshPositions().catch((err) => {
         console.error(err);
-        setStatus("Position fetch failed", true);
+        setStatus("");
       });
     }, (config.refreshSeconds || defaults.refreshSeconds) * 1000);
   }
@@ -1063,6 +1163,8 @@
     initMap();
     initContextMenu();
     await loadConfig();
+    initLangSelector();
+    initDownloadButton();
     await loadTranslations();
     await loadRoute();
     await startPolling();

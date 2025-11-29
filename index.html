@@ -10,7 +10,14 @@
 <body>
   <header class="topbar">
     <div id="title" class="title">Live Tracker</div>
-    <div id="status" class="status">Loading…</div>
+    <div class="topbar-actions">
+      <button id="download-gpx" class="topbar-btn" type="button">Download GPX</button>
+      <select id="lang-select" class="lang-select">
+        <option value="en">🇬🇧</option>
+        <option value="nl">🇳🇱</option>
+        <option value="sv">🇸🇪</option>
+      </select>
+    </div>
   </header>
   <main class="layout">
     <div id="map"></div>

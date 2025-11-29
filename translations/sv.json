@@ -1,0 +1,18 @@
+{
+  "eta": "ETA",
+  "etaHere": "ETA här: {eta}",
+  "passed": "passerat",
+  "offtrack": "deltagare ej på rutten",
+  "unknown": "okänt",
+  "next": "Nästa",
+  "offrouteLabel": "off-route",
+  "helpTip": "Välj en deltagare för att se live-ETA till waypoints. Högerklicka eller långtryck på kartan för Google Maps/Waze/koordinater och ETA till den punkten.",
+  "helpTitle": "Live Tracker Tips",
+  "toggleKm": "Visa km-markörer",
+  "toggleWp": "Visa waypoints",
+  "copyCoords": "Kopiera koordinater",
+  "openGoogle": "Öppna i Google Maps",
+  "openWaze": "Öppna i Waze",
+  "you": "Du",
+  "downloadGpx": "Ladda ner GPX"
+}

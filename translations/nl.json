@@ -1,0 +1,18 @@
+{
+  "eta": "ETA",
+  "etaHere": "ETA hier: {eta}",
+  "passed": "gepasseerd",
+  "offtrack": "deelnemer niet op parcours",
+  "unknown": "onbekend",
+  "next": "Volgende",
+  "offrouteLabel": "van route",
+  "helpTip": "Selecteer een deelnemer om live ETA's naar waypoints te zien. Rechtsklik of long-press op de kaart voor Google Maps/Waze/coördinaten en ETA tot dat punt.",
+  "helpTitle": "Live Tracker Tips",
+  "toggleKm": "Toon km-markers",
+  "toggleWp": "Toon waypoints",
+  "copyCoords": "Kopieer coördinaten",
+  "openGoogle": "Open in Google Maps",
+  "openWaze": "Open in Waze",
+  "you": "Jij",
+  "downloadGpx": "GPX downloaden"
+}
