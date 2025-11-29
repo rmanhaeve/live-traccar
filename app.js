@@ -29,6 +29,7 @@
   const lastSeen = new Map();
   const lastPositions = new Map();
   const positionsHistory = new Map();
+  const activeStartTimes = new Map();
   let viewerMarker;
   let viewerWatchId;
   let devices = new Map();
@@ -94,6 +95,9 @@
     nl: "translations/nl.json",
     sv: "translations/sv.json",
   };
+
+  const HISTORY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+  const ACTIVE_DISTANCE_THRESHOLD = 50; // meters from start
 
   function t(key, vars = {}) {
     const str = (texts && texts[key]) || defaultTexts[key] || key;
@@ -561,6 +565,47 @@
     }
   }
 
+  async function fetchRecentHistory(deviceId) {
+    if (!config?.traccarUrl || !config?.token) return;
+    if (!filterDevice(deviceId)) return;
+    const now = new Date();
+    const from = new Date(now.getTime() - HISTORY_WINDOW_MS);
+    const params = new URLSearchParams({
+      deviceId: String(deviceId),
+      from: from.toISOString(),
+      to: now.toISOString(),
+    });
+    const url = `${cleanBase(config.traccarUrl)}/api/reports/route?${params.toString()}`;
+    const data = await fetchJson(url);
+    if (!Array.isArray(data)) return;
+    const startMs = config?.startTime ? Date.parse(config.startTime) : null;
+    const samples = data
+      .map((p) => {
+        const time = p.deviceTime || p.fixTime || p.serverTime;
+        const t = time ? Date.parse(time) : NaN;
+        return { t, lat: p.latitude, lng: p.longitude };
+      })
+      .filter((p) => Number.isFinite(p.t) && (!startMs || p.t >= startMs))
+      .sort((a, b) => a.t - b.t);
+    positionsHistory.set(deviceId, samples);
+  }
+
+  async function preloadHistory() {
+    if (config?.debug) return;
+    if (!config?.traccarUrl || !config?.token) return;
+    const ids = Array.from(devices.keys()).filter((id) => filterDevice(id));
+    await Promise.all(ids.map((id) => fetchRecentHistory(id).catch((err) => console.error(err))));
+  }
+
+  function markActiveOnRoute(deviceId, progress, timeMs) {
+    if (!progress || progress.offtrack) return;
+    if (progress.proj?.distanceAlong == null) return;
+    if (progress.proj.distanceAlong < ACTIVE_DISTANCE_THRESHOLD) return;
+    if (!activeStartTimes.has(deviceId)) {
+      activeStartTimes.set(deviceId, timeMs || Date.now());
+    }
+  }
+
   function filterDevice(id) {
     if (config?.debug) return true;
     if (!config?.deviceIds || !Array.isArray(config.deviceIds)) return true;
@@ -581,7 +626,7 @@
       if (!startMs || timeMs >= startMs) {
         const list = positionsHistory.get(position.deviceId) || [];
         list.push({ t: timeMs, lat: coords[0], lng: coords[1] });
-        const cutoff = Date.now() - 60 * 60 * 1000;
+        const cutoff = Date.now() - HISTORY_WINDOW_MS;
         while (list.length && list[0].t < cutoff) list.shift();
         positionsHistory.set(position.deviceId, list);
       }
@@ -601,6 +646,7 @@
     marker.setLatLng(coords);
     marker.bringToFront();
     const prog = getDeviceProgress(position.deviceId);
+    markActiveOnRoute(position.deviceId, prog, timeMs);
     const projPoint = prog?.proj?.point;
     if (projPoint) {
       let line = projectionLines.get(position.deviceId);
@@ -1082,14 +1128,16 @@
   }
 
   function getAverageSpeedMs(deviceId) {
-    const hist = positionsHistory.get(deviceId);
-    if (!hist || hist.length < 2) {
+    const hist = positionsHistory.get(deviceId) || [];
+    const activeSince = activeStartTimes.get(deviceId) || null;
+    const cutoff = Date.now() - HISTORY_WINDOW_MS;
+    const filtered = hist.filter((p) => p.t >= cutoff && (!activeSince || p.t >= activeSince));
+    const samples =
+      filtered.length >= 2 ? filtered : filtered.length ? filtered : hist.length ? hist : null;
+    if (!samples || samples.length < 2) {
       const pos = lastPositions.get(deviceId);
       return pos?.speed != null ? pos.speed * 0.514444 : 0;
     }
-    const cutoff = Date.now() - 60 * 60 * 1000;
-    const recent = hist.filter((p) => p.t >= cutoff);
-    const samples = recent.length >= 2 ? recent : hist;
     let dist = 0;
     let startT = samples[0].t;
     let endT = samples[samples.length - 1].t;
@@ -1225,6 +1273,10 @@
   async function startPolling() {
     if ((!config?.token || !config?.traccarUrl) && !config?.debug) return;
     await refreshDevices().catch((err) => {
+      console.error(err);
+      setStatus("");
+    });
+    await preloadHistory().catch((err) => {
       console.error(err);
       setStatus("");
     });
