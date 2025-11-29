@@ -24,7 +24,11 @@
   let legendControl;
   let legendContainer;
   const markers = new Map();
+  const debugState = new Map();
+  const projectionLines = new Map();
   const lastSeen = new Map();
+  const lastPositions = new Map();
+  const positionsHistory = new Map();
   let viewerMarker;
   let viewerWatchId;
   let devices = new Map();
@@ -33,6 +37,15 @@
   let contextMenuEl;
   let longPressTimer;
   let longPressPos;
+  let selectedDeviceId = null;
+  let routePoints = [];
+  let routeDistances = [];
+  let routeWaypoints = [];
+  let routeAvgLat = 0;
+  let waypointGroup;
+  let markerToggleControl;
+  let toggleContainer;
+  let routeTotal = 0;
 
   const defaults = {
     title: "Live Tracker",
@@ -41,6 +54,10 @@
     kmMarkerInterval: 1,
     showViewerLocation: true,
     staleMinutes: 15,
+    startTime: null,
+    showKmMarkers: true,
+    showWaypoints: true,
+    debug: false,
   };
 
   function nextColor() {
@@ -65,6 +82,8 @@
     map.createPane("kmLabelPane");
     map.getPane("kmLabelPane").style.zIndex = "420";
     map.getPane("kmLabelPane").style.pointerEvents = "none";
+    map.createPane("waypointPane");
+    map.getPane("waypointPane").style.zIndex = "430";
     map.createPane("livePane");
     map.getPane("livePane").style.zIndex = "450";
     map.createPane("viewerPane");
@@ -75,6 +94,7 @@
       maxZoom: 19,
     }).addTo(map);
     kmMarkerGroup = L.layerGroup().addTo(map);
+    waypointGroup = L.layerGroup().addTo(map);
     map.on("zoomend", rebuildKmMarkers);
     map.on("movestart", () => {
       autoFit = false;
@@ -138,21 +158,11 @@
       titleEl.textContent = pageTitle;
       document.title = pageTitle;
       rebuildKmMarkers();
+      renderWaypoints();
+      renderToggles();
       renderLegend();
     } catch (err) {
       setStatus("Add config.json (see config.example.json)", true);
-    }
-  }
-
-  async function loadTrackManifest() {
-    try {
-      const res = await fetch("tracks/manifest.json", { cache: "no-store" });
-      if (!res.ok) throw new Error("No manifest");
-      const data = await res.json();
-      return Array.isArray(data.tracks) ? data.tracks : [];
-    } catch (err) {
-      setStatus("No tracks manifest found (run npm run tracks)", false);
-      return [];
     }
   }
 
@@ -172,7 +182,13 @@
         if (pts.length) segments.push(pts);
       });
     });
-    return segments;
+    const waypoints = Array.from(xml.getElementsByTagName("wpt")).map((wpt) => ({
+      lat: Number(wpt.getAttribute("lat")),
+      lng: Number(wpt.getAttribute("lon")),
+      name: wpt.querySelector("name")?.textContent?.trim(),
+      desc: wpt.querySelector("desc")?.textContent?.trim(),
+    }));
+    return { segments, waypoints };
   }
 
   function addKmMarkersForSegments(segments, color, intervalKm) {
@@ -221,21 +237,192 @@
   function rebuildKmMarkers() {
     if (!kmMarkerGroup || !map) return;
     kmMarkerGroup.clearLayers();
+    if (!config?.showKmMarkers) return;
     const intervalKm = getKmIntervalForZoom(map.getZoom());
     if (!intervalKm || intervalKm <= 0) return;
-    trackData.forEach((t) => {
-      addKmMarkersForSegments(t.segments, t.color, intervalKm);
-    });
+    if (routePoints.length) {
+      addKmMarkersForSegments(trackData[0]?.segments || [], trackData[0]?.color || "#0c8bc7", intervalKm);
+    }
   }
 
-  async function loadTrack(track) {
+  function buildRouteProfile(segments) {
+    routePoints = [];
+    routeDistances = [];
+    routeAvgLat = 0;
+    segments.forEach((seg) => {
+      seg.forEach((pt) => routePoints.push({ lat: pt[0], lng: pt[1] }));
+    });
+    if (!routePoints.length) return;
+    routeAvgLat = routePoints.reduce((sum, p) => sum + p.lat, 0) / routePoints.length;
+    routeDistances = new Array(routePoints.length).fill(0);
+    for (let i = 1; i < routePoints.length; i += 1) {
+      routeDistances[i] =
+        routeDistances[i - 1] + distanceMeters([routePoints[i - 1].lat, routePoints[i - 1].lng], [routePoints[i].lat, routePoints[i].lng]);
+    }
+    routeTotal = routeDistances[routeDistances.length - 1] || 0;
+  }
+
+  function projectOnRoute(latlng) {
+    if (!routePoints.length) return null;
+    const refLat = routeAvgLat || latlng.lat;
+    const toXY = (p) => {
+      const rad = Math.PI / 180;
+      const R = 6371000;
+      return {
+        x: p.lng * rad * Math.cos(refLat * rad) * R,
+        y: p.lat * rad * R,
+      };
+    };
+    const target = toXY(latlng);
+    let best = { dist2: Infinity, distanceAlong: 0, point: latlng };
+    for (let i = 1; i < routePoints.length; i += 1) {
+      const a = routePoints[i - 1];
+      const b = routePoints[i];
+      const ax = toXY(a);
+      const bx = toXY(b);
+      const seg = { x: bx.x - ax.x, y: bx.y - ax.y };
+      const segLen2 = seg.x * seg.x + seg.y * seg.y;
+      if (segLen2 === 0) continue;
+      const ap = { x: target.x - ax.x, y: target.y - ax.y };
+      let t = (ap.x * seg.x + ap.y * seg.y) / segLen2;
+      t = Math.max(0, Math.min(1, t));
+      const proj = { x: ax.x + seg.x * t, y: ax.y + seg.y * t };
+      const d2 = (proj.x - target.x) * (proj.x - target.x) + (proj.y - target.y) * (proj.y - target.y);
+      if (d2 < best.dist2) {
+        const segDist = distanceMeters([a.lat, a.lng], [b.lat, b.lng]);
+        best = {
+          dist2: d2,
+          distanceAlong: routeDistances[i - 1] + segDist * t,
+          point: {
+            lat: a.lat + (b.lat - a.lat) * t,
+            lng: a.lng + (b.lng - a.lng) * t,
+          },
+        };
+      }
+    }
+    if (!Number.isFinite(best.dist2)) return null;
+    const offtrack = Math.sqrt(best.dist2) > 200;
+    return { ...best, offtrack };
+  }
+
+  function mapWaypoints(rawWaypoints) {
+    if (!routePoints.length) return [];
+    const result = [];
+    rawWaypoints.forEach((wp, idx) => {
+      const proj = projectOnRoute({ lat: wp.lat, lng: wp.lng });
+      if (!proj) return;
+      result.push({
+        name: wp.name || wp.desc || `Point ${idx + 1}`,
+        desc: wp.desc || "",
+        distanceAlong: proj.distanceAlong,
+        coord: proj.point,
+      });
+    });
+    if (!result.length && routePoints.length) {
+      result.push(
+        { name: "Start", distanceAlong: 0, coord: routePoints[0] },
+        {
+          name: "Finish",
+          distanceAlong: routeDistances[routeDistances.length - 1] || 0,
+          coord: routePoints[routePoints.length - 1],
+        }
+      );
+    }
+    result.sort((a, b) => a.distanceAlong - b.distanceAlong);
+    return result;
+  }
+
+  function pointAtDistance(distanceAlong) {
+    if (!routePoints.length || !routeDistances.length) return null;
+    const target = Math.min(Math.max(distanceAlong, 0), routeDistances[routeDistances.length - 1]);
+    let idx = routeDistances.findIndex((d) => d >= target);
+    if (idx <= 0) return routePoints[routePoints.length - 1];
+    if (routeDistances[idx] === target) return routePoints[idx];
+    const prevIdx = idx - 1;
+    const segmentLen = routeDistances[idx] - routeDistances[prevIdx];
+    const t = segmentLen > 0 ? (target - routeDistances[prevIdx]) / segmentLen : 0;
+    const a = routePoints[prevIdx];
+    const b = routePoints[idx];
+    return {
+      lat: a.lat + (b.lat - a.lat) * t,
+      lng: a.lng + (b.lng - a.lng) * t,
+    };
+  }
+
+  function renderWaypoints() {
+    if (!waypointGroup) return;
+    waypointGroup.clearLayers();
+    if (!config?.showWaypoints) return;
+    const minLabelZoom = 13;
+    const markerLayers = [];
+    const makeIcon = (name) => {
+      const temp = document.createElement("span");
+      temp.className = "waypoint-label-inner";
+      temp.textContent = name;
+      temp.style.position = "absolute";
+      temp.style.visibility = "hidden";
+      temp.style.left = "-9999px";
+      document.body.appendChild(temp);
+      const rect = temp.getBoundingClientRect();
+      document.body.removeChild(temp);
+      const size = [Math.ceil(rect.width), Math.ceil(rect.height)];
+      return L.divIcon({
+        className: "waypoint-label-icon",
+        html: `<span class="waypoint-label-inner">${name}</span>`,
+        iconSize: size,
+        iconAnchor: [size[0] / 2, size[1] / 2],
+      });
+    };
+    routeWaypoints.forEach((wp) => {
+      const marker = L.marker([wp.coord.lat, wp.coord.lng], {
+        pane: "waypointPane",
+        icon: makeIcon(wp.name),
+      }).addTo(waypointGroup);
+      markerLayers.push(marker);
+      const eta = selectedDeviceId ? computeEta(selectedDeviceId, wp.distanceAlong) : null;
+      const etaText =
+        eta?.status === "eta" && eta.arrival
+          ? formatDateTimeFull(eta.arrival)
+        : eta?.status === "passed"
+            ? "passed"
+            : eta?.status === "offtrack"
+              ? "participant not on track"
+              : "unknown";
+      marker.on("click", () => {
+        const idx = routeWaypoints.indexOf(wp);
+        const next = idx >= 0 && idx < routeWaypoints.length - 1 ? routeWaypoints[idx + 1] : null;
+        const nextLabel = next ? next.name : "Finish";
+        const popupHtml = `<strong>${wp.name}</strong><br>ETA: ${etaText}<br><span class="muted">Next: ${nextLabel}</span>`;
+        marker.bindPopup(popupHtml).openPopup();
+      });
+    });
+    const toggleLabels = () => {
+      const show = map.getZoom() >= minLabelZoom;
+      markerLayers.forEach((m) => {
+        const el = m.getElement();
+        if (!el) return;
+        if (show) el.classList.remove("hidden");
+        else el.classList.add("hidden");
+      });
+    };
+    toggleLabels();
+    map.off("zoomend", toggleLabels);
+    map.on("zoomend", toggleLabels);
+  }
+
+  async function loadRoute() {
+    const trackFile = config?.trackFile || "tracks/track.gpx";
     try {
-      const res = await fetch(`tracks/${track.file}`, { cache: "no-store" });
-      if (!res.ok) throw new Error(`Track ${track.file} missing`);
+      const res = await fetch(trackFile, { cache: "no-store" });
+      if (!res.ok) throw new Error(`Track ${trackFile} missing`);
       const text = await res.text();
-      const segments = parseGpx(text);
-      if (!segments.length) throw new Error(`Track ${track.file} has no segments`);
-      const color = track.color || nextColor();
+      const { segments, waypoints } = parseGpx(text);
+      if (!segments.length) throw new Error(`Track ${trackFile} has no segments`);
+      const color = "#0c8bc7";
+      trackLayers.forEach((l) => l.remove());
+      trackLayers.length = 0;
+      kmMarkerGroup.clearLayers();
+      trackData.length = 0;
       const poly = L.polyline(segments, {
         color,
         weight: 4,
@@ -244,21 +431,15 @@
       }).addTo(map);
       trackLayers.push(poly);
       trackData.push({ segments, color });
+      buildRouteProfile(segments);
+      routeWaypoints = mapWaypoints(waypoints || []);
+      renderWaypoints();
       rebuildKmMarkers();
       segments.forEach((seg) => seg.forEach((pt) => extendBounds(pt)));
       fitToData();
     } catch (err) {
       console.error(err);
-      setStatus(`Track error: ${track.file}`, true);
-    }
-  }
-
-  async function loadTracks() {
-    const manifest = await loadTrackManifest();
-    if (!manifest.length) return;
-    for (const track of manifest) {
-      // eslint-disable-next-line no-await-in-loop
-      await loadTrack(track);
+      setStatus(`Track error: ${trackFile}`, true);
     }
   }
 
@@ -276,13 +457,27 @@
   }
 
   async function refreshDevices() {
-    if (!config?.traccarUrl || !config?.token) return;
-    const data = await fetchJson(`${cleanBase(config.traccarUrl)}/api/devices`);
-    devices = new Map(data.map((d) => [d.id, d]));
+    let list = [];
+    if (config?.traccarUrl && config?.token) {
+      const data = await fetchJson(`${cleanBase(config.traccarUrl)}/api/devices`);
+      list = [...data];
+    }
+    if (config?.debug) {
+      list.push(
+        { id: 10001, name: "Debug Rider 1" },
+        { id: 10002, name: "Debug Rider 2" },
+        { id: 10003, name: "Debug Offroute" }
+      );
+    }
+    devices = new Map(list.map((d) => [d.id, d]));
     renderLegend();
+    if (!selectedDeviceId && list.length) {
+      selectDevice(list[0].id);
+    }
   }
 
   function filterDevice(id) {
+    if (config?.debug) return true;
     if (!config?.deviceIds || !Array.isArray(config.deviceIds)) return true;
     return config.deviceIds.includes(id);
   }
@@ -292,8 +487,20 @@
     if (!filterDevice(position.deviceId)) return;
     const name = device?.name || `Device ${position.deviceId}`;
     const time = position.deviceTime || position.fixTime || position.serverTime;
+    const timeMs = time ? Date.parse(time) : null;
     if (time) lastSeen.set(position.deviceId, time);
+    lastPositions.set(position.deviceId, position);
     const coords = [position.latitude, position.longitude];
+    if (timeMs) {
+      const startMs = config?.startTime ? Date.parse(config.startTime) : null;
+      if (!startMs || timeMs >= startMs) {
+        const list = positionsHistory.get(position.deviceId) || [];
+        list.push({ t: timeMs, lat: coords[0], lng: coords[1] });
+        const cutoff = Date.now() - 60 * 60 * 1000;
+        while (list.length && list[0].t < cutoff) list.shift();
+        positionsHistory.set(position.deviceId, list);
+      }
+    }
     if (!markers.has(position.deviceId)) {
       const marker = L.circleMarker(coords, {
         radius: 8,
@@ -308,6 +515,23 @@
     const marker = markers.get(position.deviceId);
     marker.setLatLng(coords);
     marker.bringToFront();
+    const prog = getDeviceProgress(position.deviceId);
+    const projPoint = prog?.proj?.point;
+    if (projPoint) {
+      let line = projectionLines.get(position.deviceId);
+      const latlngs = [coords, [projPoint.lat, projPoint.lng]];
+      if (!line) {
+        line = L.polyline(latlngs, {
+          color: "#6b7280",
+          weight: 2,
+          dashArray: "4 4",
+          pane: "livePane",
+        }).addTo(map);
+        projectionLines.set(position.deviceId, line);
+      } else {
+        line.setLatLngs(latlngs);
+      }
+    }
     const stale = isStale(position.deviceId);
     marker.setStyle({
       color: stale ? "#6b7280" : "#0c8bc7",
@@ -326,13 +550,59 @@
   }
 
   async function refreshPositions() {
-    if (!config?.traccarUrl || !config?.token) return;
-    const url = `${cleanBase(config.traccarUrl)}/api/positions`;
-    const positions = await fetchJson(url);
+    let positions = [];
+    if (config?.traccarUrl && config?.token) {
+      const url = `${cleanBase(config.traccarUrl)}/api/positions`;
+      positions = await fetchJson(url);
+    }
+    if (config?.debug) {
+      const debugPos = buildDebugPositions();
+      positions.push(...debugPos);
+    }
     positions.forEach(updateMarker);
     renderLegend();
+    renderWaypoints();
     fitToData();
     setStatus(`Last update ${new Date().toLocaleTimeString()}`);
+  }
+
+  function buildDebugPositions() {
+    const now = new Date().toISOString();
+    if (!routeTotal || !routePoints.length) {
+      return [
+        { deviceId: 10001, latitude: 0, longitude: 0, speed: 0, deviceTime: now },
+        { deviceId: 10002, latitude: 0.01, longitude: 0.01, speed: 0, deviceTime: now },
+        { deviceId: 10003, latitude: 0.02, longitude: 0.02, speed: 0, deviceTime: now },
+      ];
+    }
+    const stepSeconds = config?.refreshSeconds || defaults.refreshSeconds;
+    const debugSpeedMs = 6; // ~22 km/h
+    const deltaFraction = routeTotal > 0 ? (debugSpeedMs * stepSeconds) / routeTotal : 0;
+    const onTrack = (deviceId, initialFraction) => {
+      const state = debugState.get(deviceId) || { fraction: initialFraction };
+      state.fraction = Math.min(1, state.fraction + deltaFraction);
+      debugState.set(deviceId, state);
+      const dist = routeTotal * state.fraction;
+      const pt = pointAtDistance(dist) || routePoints[0];
+      return {
+        deviceId,
+        latitude: pt.lat,
+        longitude: pt.lng,
+        speed: debugSpeedMs / 0.514444, // convert m/s to knots
+        deviceTime: now,
+      };
+    };
+    const offTrack = () => {
+      const mid = pointAtDistance(routeTotal * 0.5) || { lat: 0, lng: 0 };
+      return {
+        deviceId: 10003,
+        latitude: mid.lat + 0.05,
+        longitude: mid.lng + 0.05,
+        speed: 0,
+        deviceTime: now,
+      };
+    };
+    return [onTrack(10001, Math.random() * 0.8), onTrack(10002, 0.2 + Math.random() * 0.6), offTrack()];
   }
 
   function fitToData() {
@@ -407,6 +677,24 @@
     const x = rect.left + (containerPoint?.x ?? 0);
     const y = rect.top + (containerPoint?.y ?? 0);
     contextMenuEl.innerHTML = "";
+    if (selectedDeviceId && routePoints.length) {
+      const targetProj = projectOnRoute(latlng);
+      if (targetProj) {
+        const eta = computeEta(selectedDeviceId, targetProj.distanceAlong);
+        const info = document.createElement("div");
+        info.className = "context-info";
+        const etaText =
+          eta.status === "eta" && eta.arrival
+            ? formatDateTimeFull(eta.arrival)
+            : eta.status === "passed"
+              ? "passed"
+              : eta.status === "offtrack"
+                ? "participant not on track"
+                : "unknown";
+        info.textContent = `ETA here: ${etaText}`;
+        contextMenuEl.appendChild(info);
+      }
+    }
     const items = [
       {
         label: "Open in Google Maps",
@@ -506,6 +794,41 @@
     viewerMarker.openPopup();
   }
 
+  function ensureEtaControl() {
+    if (!map) return null;
+    if (!etaControl) {
+      etaControl = L.control({ position: "topright" });
+      etaControl.onAdd = () => {
+        etaContainer = L.DomUtil.create("div", "eta-control");
+        L.DomEvent.disableClickPropagation(etaContainer);
+        L.DomEvent.disableScrollPropagation(etaContainer);
+        return etaContainer;
+      };
+      etaControl.addTo(map);
+    }
+    return etaContainer;
+  }
+
+  function getDeviceProgress(deviceId) {
+    const pos = lastPositions.get(deviceId);
+    if (!pos) return null;
+    const proj = projectOnRoute({ lat: pos.latitude, lng: pos.longitude });
+    if (!proj) return null;
+    const offtrack = Boolean(proj.offtrack);
+    const speedMs = getAverageSpeedMs(deviceId);
+    return { proj, speedMs, pos, offtrack };
+  }
+
+  function computeEta(deviceId, targetDistance) {
+    const progress = getDeviceProgress(deviceId);
+    if (!progress || progress.offtrack) return { status: "offtrack" };
+    const delta = targetDistance - progress.proj.distanceAlong;
+    if (delta <= 0) return { status: "passed" };
+    if (!progress.speedMs || progress.speedMs <= 0) return { status: "unknown" };
+    const arrival = new Date(Date.now() + (delta / progress.speedMs) * 1000);
+    return { status: "eta", arrival };
+  }
+
   function isStale(deviceId) {
     const minutes = Number(config?.staleMinutes ?? defaults.staleMinutes);
     if (!minutes || minutes <= 0) return false;
@@ -535,9 +858,32 @@
 
   function formatDateTimeFull(timeStr) {
     if (!timeStr) return "";
-    const d = new Date(timeStr);
+    const d = timeStr instanceof Date ? timeStr : new Date(timeStr);
     if (Number.isNaN(d.getTime())) return "";
     return d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  }
+
+  function getAverageSpeedMs(deviceId) {
+    const hist = positionsHistory.get(deviceId);
+    if (!hist || hist.length < 2) {
+      const pos = lastPositions.get(deviceId);
+      return pos?.speed != null ? pos.speed * 0.514444 : 0;
+    }
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    const recent = hist.filter((p) => p.t >= cutoff);
+    const samples = recent.length >= 2 ? recent : hist;
+    let dist = 0;
+    let startT = samples[0].t;
+    let endT = samples[samples.length - 1].t;
+    for (let i = 1; i < samples.length; i += 1) {
+      dist += distanceMeters([samples[i - 1].lat, samples[i - 1].lng], [samples[i].lat, samples[i].lng]);
+    }
+    const span = (endT || 0) - (startT || 0);
+    if (span <= 0) {
+      const pos = lastPositions.get(deviceId);
+      return pos?.speed != null ? pos.speed * 0.514444 : 0;
+    }
+    return dist / (span / 1000);
   }
 
   function renderLegend() {
@@ -551,17 +897,24 @@
       const btn = document.createElement("button");
       btn.className = "legend-btn";
       btn.dataset.deviceId = String(device.id);
-      const dot = document.createElement("span");
-      dot.className = `legend-dot ${isStale(device.id) ? "stale" : "live"}`;
-      const label = document.createElement("span");
-      const name = device.name || `Device ${device.id}`;
-      const ts = formatTimeLabel(lastSeen.get(device.id));
-      label.textContent = ts ? `${name} (${ts})` : name;
-      btn.append(dot, label);
+    if (device.id === selectedDeviceId) btn.classList.add("selected");
+    const dot = document.createElement("span");
+    dot.className = `legend-dot ${isStale(device.id) ? "stale" : "live"}`;
+    const label = document.createElement("span");
+    const name = device.name || `Device ${device.id}`;
+    const ts = formatTimeLabel(lastSeen.get(device.id));
+    const prog = getDeviceProgress(device.id);
+    const offRoute = !prog || prog.offtrack;
+    const km = !offRoute && prog
+      ? `${Math.round((prog.proj.distanceAlong / 1000) * 10) / 10} km`
+      : null;
+    const suffix = offRoute ? " • off-route" : km ? ` • ${km}` : "";
+    label.textContent = ts ? `${name} (${ts})${suffix}` : `${name}${suffix}`;
+    btn.append(dot, label);
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        focusDevice(device.id);
+        selectDevice(device.id, { focus: true });
       });
       item.appendChild(btn);
       container.appendChild(item);
@@ -587,8 +940,54 @@
     }
   }
 
+  function renderToggles() {
+    if (!map) return;
+    if (!markerToggleControl) {
+      markerToggleControl = L.control({ position: "topright" });
+      markerToggleControl.onAdd = () => {
+        toggleContainer = L.DomUtil.create("div", "toggle-control");
+        L.DomEvent.disableClickPropagation(toggleContainer);
+        L.DomEvent.disableScrollPropagation(toggleContainer);
+        return toggleContainer;
+      };
+      markerToggleControl.addTo(map);
+    }
+    toggleContainer.innerHTML = "";
+    const kmRow = document.createElement("label");
+    kmRow.className = "toggle-row";
+    const kmCb = document.createElement("input");
+    kmCb.type = "checkbox";
+    kmCb.checked = Boolean(config?.showKmMarkers);
+    kmCb.addEventListener("change", () => {
+      config.showKmMarkers = kmCb.checked;
+      rebuildKmMarkers();
+    });
+    kmRow.append(kmCb, document.createTextNode(" Show km markers"));
+    toggleContainer.appendChild(kmRow);
+
+    const wpRow = document.createElement("label");
+    wpRow.className = "toggle-row";
+    const wpCb = document.createElement("input");
+    wpCb.type = "checkbox";
+    wpCb.checked = Boolean(config?.showWaypoints);
+    wpCb.addEventListener("change", () => {
+      config.showWaypoints = wpCb.checked;
+      renderWaypoints();
+    });
+    wpRow.append(wpCb, document.createTextNode(" Show waypoints"));
+    toggleContainer.appendChild(wpRow);
+  }
+
+  function selectDevice(deviceId, { focus = false } = {}) {
+    selectedDeviceId = deviceId;
+    renderLegend();
+    renderWaypoints();
+    renderToggles();
+    if (focus) focusDevice(deviceId);
+  }
+
   async function startPolling() {
-    if (!config?.token || !config?.traccarUrl) return;
+    if ((!config?.token || !config?.traccarUrl) && !config?.debug) return;
     await refreshDevices().catch((err) => {
       console.error(err);
       setStatus("Device fetch failed", true);
@@ -597,6 +996,7 @@
       console.error(err);
       setStatus("Position fetch failed", true);
     });
+    renderToggles();
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(() => {
       refreshPositions().catch((err) => {
@@ -610,7 +1010,7 @@
     initMap();
     initContextMenu();
     await loadConfig();
-    await loadTracks();
+    await loadRoute();
     await startPolling();
     startViewerLocation();
   }

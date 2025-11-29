@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "tracks": "node scripts/generate-manifest.js"
+    "lint": "echo \"no lint configured\""
   },
   "dependencies": {
     "leaflet": "^1.9.4"
