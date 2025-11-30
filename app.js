@@ -3,6 +3,7 @@ import {
   DEFAULT_TEXTS,
   TRANSLATIONS_MAP,
   LANGUAGE_COOKIE,
+  KM_MARKER_BASE_KM,
 } from "./src/constants.js";
 import {
   parseGpx,
@@ -207,7 +208,7 @@ function persistToggles() {
 
 function rebuildDistanceTicks() {
   const total = getRouteTotal() || 0;
-  const baseKm = Number(config?.kmMarkerInterval ?? DEFAULT_CONFIG.kmMarkerInterval);
+  const baseKm = KM_MARKER_BASE_KM;
   distanceTicks = [];
   if (!total || !baseKm || baseKm <= 0) return;
   const step = baseKm * 1000;

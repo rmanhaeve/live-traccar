@@ -184,7 +184,7 @@ body {
 
 .help-trigger {
   position: absolute;
-  bottom: calc(var(--elevation-offset, 0px) + 16px);
+  bottom: calc(var(--elevation-offset, 0px) + 72px);
   left: 16px;
   width: 28px;
   height: 28px;
@@ -206,7 +206,7 @@ body {
 
 .help-popup {
   position: fixed;
-  bottom: calc(var(--elevation-offset, 0px) + 52px);
+  bottom: calc(var(--elevation-offset, 0px) + 108px);
   left: 12px;
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid #e5e9f0;

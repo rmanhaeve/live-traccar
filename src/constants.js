@@ -2,7 +2,6 @@ export const DEFAULT_CONFIG = {
   title: "Live Tracker",
   refreshSeconds: 10,
   deviceIds: null,
-  kmMarkerInterval: 1,
   showViewerLocation: false,
   staleMinutes: 15,
   startTime: null,
@@ -12,6 +11,8 @@ export const DEFAULT_CONFIG = {
   showWaypoints: true,
   historyHours: 24,
 };
+
+export const KM_MARKER_BASE_KM = 2;
 
 export const DEFAULT_TEXTS = {
   eta: "ETA",

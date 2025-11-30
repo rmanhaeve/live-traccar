@@ -1,4 +1,5 @@
 import { getRouteDistances, getRoutePoints } from "./route.js";
+import { KM_MARKER_BASE_KM } from "./constants.js";
 import { computeElevationTotals } from "./stats.js";
 
 const colors = [
@@ -566,6 +567,12 @@ export function initMap() {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
     maxZoom: 19,
   }).addTo(state.map);
+  L.control
+    .scale({
+      position: "bottomleft",
+      imperial: false,
+    })
+    .addTo(state.map);
   state.kmMarkerGroup = L.layerGroup().addTo(state.map);
   state.waypointGroup = L.layerGroup().addTo(state.map);
   state.map.on("zoomend", rebuildKmMarkers);
@@ -662,9 +669,10 @@ function addKmMarkersForSegments(segments, color, intervalKm) {
 }
 
 export function rebuildKmMarkers() {
-  if (!state.kmMarkerGroup || !state.map || !state.config?.showKmMarkers) return;
+  if (!state.kmMarkerGroup) return;
   state.kmMarkerGroup.clearLayers();
-  const base = Number(state.config?.kmMarkerInterval ?? 1);
+  if (!state.map || !state.config?.showKmMarkers) return;
+  const base = KM_MARKER_BASE_KM;
   if (!base || base <= 0) return;
   const z = state.map.getZoom() || 0;
   let intervalKm = base * 10;
