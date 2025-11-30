@@ -1,6 +1,32 @@
 import { ACTIVE_DISTANCE_THRESHOLD, HISTORY_WINDOW_MS } from "./constants.js";
 import { distanceMeters, toRad } from "./geo.js";
-import { projectOnRouteWithHint } from "./route.js";
+import { getRouteTotal, projectOnRouteWithHint } from "./route.js";
+
+const ENDPOINT_PROXIMITY_METERS = 30;
+
+function inferEndpoint(deviceId, distanceAlong, total, lastProjection, positionsHistory) {
+  if (!Number.isFinite(distanceAlong) || !Number.isFinite(total) || total <= 0) return null;
+  const distToStart = distanceAlong;
+  const distToFinish = Math.max(total - distanceAlong, 0);
+  const nearStart = distToStart <= ENDPOINT_PROXIMITY_METERS;
+  const nearFinish = distToFinish <= ENDPOINT_PROXIMITY_METERS;
+  if (!nearStart && !nearFinish) return null;
+  if (nearStart && !nearFinish) return "start";
+  if (!nearStart && nearFinish) return "finish";
+  const prevDist = lastProjection?.distanceAlong;
+  if (Number.isFinite(prevDist)) {
+    return prevDist > total / 2 ? "finish" : "start";
+  }
+  const hist = positionsHistory?.get ? positionsHistory.get(deviceId) : null;
+  const prevSample = hist && hist.length > 1 ? hist[hist.length - 2] : hist?.[0];
+  if (prevSample) {
+    const prevProj = projectOnRouteWithHint({ lat: prevSample.lat, lng: prevSample.lng }, prevDist);
+    if (prevProj?.distanceAlong != null) {
+      return prevProj.distanceAlong > total / 2 ? "finish" : "start";
+    }
+  }
+  return "start";
+}
 
 export function getAverageSpeedMs(positionsHistory, deviceId, activeStartTimes, now = Date.now()) {
   const hist = positionsHistory.get(deviceId) || [];
@@ -49,9 +75,11 @@ export function computeDeviceProgress(deviceId, {
   const proj = projectOnRouteWithHint({ lat: pos.latitude, lng: pos.longitude }, hint, heading);
   if (!proj) return null;
   const offtrack = Boolean(proj.offtrack);
+  const total = getRouteTotal();
+  const endpoint = !offtrack ? inferEndpoint(deviceId, proj.distanceAlong, total, last, positionsHistory) : null;
   // store last projection for continuity
   lastProjection.set(deviceId, { distanceAlong: proj.distanceAlong, t: Date.now() });
-  return { proj, pos, offtrack };
+  return { proj, pos, offtrack, endpoint };
 }
 
 export function markActiveOnRoute(deviceId, progress, activeStartTimes, now = Date.now()) {

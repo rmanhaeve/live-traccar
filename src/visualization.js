@@ -17,6 +17,7 @@ const state = {
   computeEta: null,
   getDeviceProgress: null,
   getAverageSpeedMs: null,
+  getProgressHistory: null,
   isStale: null,
   formatDateTimeFull: (x) => String(x),
   formatTimeLabel: (x) => String(x),
@@ -30,6 +31,7 @@ const state = {
   devices: null,
   lastSeen: null,
   lastPositions: null,
+  historyOverlay: null,
   routeWaypoints: [],
   trackData: [],
   map: null,
@@ -63,6 +65,7 @@ export function setupVisualization(deps) {
   state.computeEta = deps.computeEta;
   state.getDeviceProgress = deps.getDeviceProgress;
   state.getAverageSpeedMs = deps.getAverageSpeedMs;
+  state.getProgressHistory = deps.getProgressHistory || (() => null);
   state.isStale = deps.isStale;
   state.projectOnRoute = deps.projectOnRoute;
   state.formatDateTimeFull = deps.formatDateTimeFull;
@@ -76,6 +79,75 @@ export function setupVisualization(deps) {
   state.devices = deps.devices;
   state.lastSeen = deps.lastSeen;
   state.lastPositions = deps.lastPositions;
+}
+
+function hideHistoryOverlay() {
+  if (state.historyOverlay) {
+    state.historyOverlay.remove();
+    state.historyOverlay = null;
+  }
+}
+
+function showHistoryOverlay(deviceId) {
+  const hist = state.getProgressHistory(deviceId);
+  if (!hist) return;
+  hideHistoryOverlay();
+  const overlay = document.createElement("div");
+  overlay.className = "history-overlay";
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) hideHistoryOverlay();
+  });
+  const panel = document.createElement("div");
+  panel.className = "history-modal";
+  const header = document.createElement("div");
+  header.className = "history-modal-header";
+  const title = document.createElement("div");
+  title.textContent = state.t("historyTitle");
+  const close = document.createElement("button");
+  close.className = "history-close";
+  close.textContent = "×";
+  close.addEventListener("click", hideHistoryOverlay);
+  header.append(title, close);
+  panel.appendChild(header);
+  const sections = document.createElement("div");
+  sections.className = "history-sections";
+  const addSection = (label, items, formatter) => {
+    const block = document.createElement("div");
+    block.className = "history-section";
+    const h = document.createElement("div");
+    h.className = "history-label";
+    h.textContent = label;
+    block.appendChild(h);
+    if (!items || !items.length) {
+      const empty = document.createElement("div");
+      empty.className = "history-empty";
+      empty.textContent = state.t("historyNone");
+      block.appendChild(empty);
+    } else {
+      items.forEach((it) => {
+        const row = document.createElement("div");
+        row.className = "history-row";
+        row.textContent = formatter(it);
+        block.appendChild(row);
+      });
+    }
+    sections.appendChild(block);
+  };
+  addSection(
+    state.t("historyKm"),
+    hist?.distances || [],
+    (item) => `${Math.round((item.distanceAlong / 1000) * 10) / 10} km • ${state.formatDateTimeFull(item.timeMs)}`
+  );
+  addSection(
+    state.t("historyWp"),
+    hist?.waypoints || [],
+    (item) =>
+      `${item.name || state.t("historyWp")} (${Math.round((item.distanceAlong / 1000) * 10) / 10} km) • ${state.formatDateTimeFull(item.timeMs)}`
+  );
+  panel.appendChild(sections);
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  state.historyOverlay = overlay;
 }
 
 export function initMap() {
@@ -293,14 +365,6 @@ export function renderLegend() {
   const container = ensureLegend();
   if (!container || !state.devices) return;
   container.innerHTML = "";
-  const dbgWrap = document.createElement("div");
-  dbgWrap.className = "legend-item";
-  const dbgBtn = document.createElement("button");
-  dbgBtn.className = "legend-btn";
-  dbgBtn.textContent = "Debug";
-  dbgBtn.addEventListener("click", () => window.open("/debug.html", "_blank"));
-  dbgWrap.appendChild(dbgBtn);
-  container.appendChild(dbgWrap);
   const deviceEntries = Array.from(state.devices.values()).filter((d) => state.filterDevice(d.id));
   deviceEntries.forEach((device) => {
     const item = document.createElement("div");
@@ -316,8 +380,17 @@ export function renderLegend() {
     const ts = state.formatTimeLabel(state.lastSeen.get(device.id));
     const prog = state.getDeviceProgress(device.id);
     const offRoute = !prog || prog.offtrack;
+    const endpoint = prog?.endpoint;
     const km = !offRoute && prog ? `${Math.round((prog.proj.distanceAlong / 1000) * 10) / 10} km` : null;
-    const suffix = offRoute ? ` • ${state.t("offrouteLabel")}` : km ? ` • ${km}` : "";
+    const suffix = offRoute
+      ? ` • ${state.t("offrouteLabel")}`
+      : endpoint === "start"
+        ? ` • ${state.t("startLabel")}`
+        : endpoint === "finish"
+          ? ` • ${state.t("finishLabel")}`
+          : km
+            ? ` • ${km}`
+            : "";
     label.textContent = ts ? `${name} (${ts})${suffix}` : `${name}${suffix}`;
     btn.append(dot, label);
     btn.addEventListener("click", (e) => {
@@ -451,13 +524,34 @@ export function updateMarker(position) {
   });
   const avgMs = state.getAverageSpeedMs(position.deviceId);
   const speed = avgMs ? ` • ${Math.round(avgMs * 3.6 * 10) / 10} km/h` : "";
-  const content = `${name}${speed}<br><span class="muted">${state.formatDateTimeFull(time) || ""}</span>`;
+  const posLabel =
+    prog?.endpoint === "start"
+      ? ` • ${state.t("startLabel")}`
+      : prog?.endpoint === "finish"
+        ? ` • ${state.t("finishLabel")}`
+        : "";
+  const showHistoryBtn =
+    state.getSelectedDeviceId && state.getSelectedDeviceId() === position.deviceId
+      ? `<br><button class="history-inline-btn" data-history-id="${position.deviceId}">${state.t("historyShow")}</button>`
+      : "";
+  const content = `${name}${speed}${posLabel}<br><span class="muted">${state.formatDateTimeFull(time) || ""}</span>${showHistoryBtn}`;
   const popup = marker.getPopup();
   if (popup) {
     popup.setContent(content);
   } else {
     marker.bindPopup(content);
   }
+  marker.off("popupopen");
+  marker.on("popupopen", () => {
+    const btnEl = marker.getPopup()?.getElement()?.querySelector(".history-inline-btn");
+    if (btnEl) {
+      btnEl.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showHistoryOverlay(position.deviceId);
+      });
+    }
+  });
   extendBounds(coords);
 }
 

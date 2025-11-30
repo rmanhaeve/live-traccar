@@ -9,5 +9,4 @@
   "kmMarkerInterval": 1,
   "showViewerLocation": true,
   "staleMinutes": 15,
-  "debug": true
 }

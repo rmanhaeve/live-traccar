@@ -8,7 +8,6 @@ export const DEFAULT_CONFIG = {
   startTime: null,
   showKmMarkers: true,
   showWaypoints: true,
-  debug: false,
 };
 
 export const DEFAULT_TEXTS = {
@@ -19,6 +18,13 @@ export const DEFAULT_TEXTS = {
   unknown: "unknown",
   next: "Next",
   offrouteLabel: "off-route",
+  startLabel: "start",
+  finishLabel: "finish",
+  historyTitle: "Progress",
+  historyKm: "Distance ticks",
+  historyWp: "Waypoints",
+  historyNone: "None yet",
+  historyShow: "Show history",
   helpTip:
     "Select a participant to see live ETAs to waypoints. Right-click or long-press the map for Google Maps/Waze/coords and ETA to that point.",
   helpTitle: "Live Tracker Tips",

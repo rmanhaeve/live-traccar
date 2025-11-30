@@ -209,6 +209,17 @@ body {
   background: rgba(12, 139, 199, 0.12);
 }
 
+.history-inline-btn {
+  margin-top: 6px;
+  padding: 4px 8px;
+  border: 1px solid #0c8bc7;
+  background: #fff;
+  color: #0c8bc7;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+
 .toggle-control {
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid #e5e9f0;
@@ -294,6 +305,77 @@ body {
   font-size: 0.9rem;
   color: #0f172a;
   border-bottom: 1px solid #e5e9f0;
+}
+
+.history-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+  padding: 12px;
+}
+
+.history-modal {
+  background: #fff;
+  border-radius: 10px;
+  width: min(720px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.25);
+  border: 1px solid #e5e9f0;
+  padding: 16px;
+}
+
+.history-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.history-close {
+  border: none;
+  background: transparent;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #0f172a;
+}
+
+.history-sections {
+  display: grid;
+  gap: 12px;
+}
+
+.history-section {
+  border: 1px solid #e5e9f0;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f9fbff;
+}
+
+.history-label {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.history-row {
+  padding: 4px 0;
+  border-bottom: 1px solid #e5e9f0;
+  font-size: 0.95rem;
+}
+
+.history-row:last-child {
+  border-bottom: none;
+}
+
+.history-empty {
+  color: #6b7280;
+  font-size: 0.95rem;
 }
 
 @media (max-width: 960px) {

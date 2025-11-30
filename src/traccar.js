@@ -1,5 +1,3 @@
-import { buildDebugPositions } from "./debug.js";
-
 function cleanBase(url) {
   return url.replace(/\/+$/, "");
 }
@@ -18,14 +16,7 @@ export async function fetchDevices(config) {
   return Array.isArray(data) ? data : [];
 }
 
-export async function fetchPositions(config, {
-  debugState = null,
-  routeTotalOverride = null,
-  routePointsOverride = null,
-} = {}) {
-  if (config?.debug) {
-    return buildDebugPositions(debugState || new Map(), config, routeTotalOverride, routePointsOverride);
-  }
+export async function fetchPositions(config) {
   if (!config?.traccarUrl || !config?.token) return [];
   const url = `${cleanBase(config.traccarUrl)}/api/positions`;
   const data = await fetchJson(config, url);

@@ -24,7 +24,7 @@ import {
   markActiveOnRoute,
 } from "./src/stats.js";
 import { fetchDevices, fetchPositions, fetchRecentHistory } from "./src/traccar.js";
-import { installDebugInfoHook } from "./src/debug.js";
+import { buildDebugPositions, installDebugInfoHook } from "./src/debug.js";
 import {
   setupVisualization,
   initMap,
@@ -54,6 +54,8 @@ let refreshTimer;
 let downloadButton;
 let langSelector;
 let userPreferences;
+let routeWaypoints = [];
+let distanceTicks = [];
 
 const devices = new Map();
 const lastSeen = new Map();
@@ -62,6 +64,21 @@ const positionsHistory = new Map();
 const lastProjection = new Map();
 const activeStartTimes = new Map();
 const debugState = new Map();
+const progressEvents = new Map();
+
+function parseBoolParam(params, key) {
+  if (!params.has(key)) return null;
+  const raw = params.get(key);
+  if (raw === null || raw === "") return true;
+  const val = raw.toString().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(val);
+}
+
+function applyUrlOverrides() {
+  const params = new URLSearchParams(window.location.search);
+  const debugParam = parseBoolParam(params, "debug");
+  config.debug = debugParam === null ? false : debugParam;
+}
 
 function t(key, vars = {}) {
   const str = (texts && texts[key]) || DEFAULT_TEXTS[key] || key;
@@ -150,6 +167,17 @@ function persistToggles() {
   });
 }
 
+function rebuildDistanceTicks() {
+  const total = getRouteTotal() || 0;
+  const baseKm = Number(config?.kmMarkerInterval ?? DEFAULT_CONFIG.kmMarkerInterval);
+  distanceTicks = [];
+  if (!total || !baseKm || baseKm <= 0) return;
+  const step = baseKm * 1000;
+  for (let d = step; d <= total + 1e-6; d += step) {
+    distanceTicks.push(d);
+  }
+}
+
 function applySavedTogglePreferences() {
   const prefs = readPreferences();
   const toggles = prefs?.toggles;
@@ -201,6 +229,7 @@ async function loadConfig() {
     if (!res.ok) throw new Error("config.json missing");
     const cfg = await res.json();
     Object.assign(config, DEFAULT_CONFIG, cfg);
+    applyUrlOverrides();
     applySavedTogglePreferences();
     texts = { ...DEFAULT_TEXTS };
     setStatus("");
@@ -307,6 +336,9 @@ async function loadRoute() {
     buildRouteProfile(segments);
     renderRoute(segments, "#0c8bc7");
     const mappedWps = mapWaypoints(waypoints || []);
+    routeWaypoints = mappedWps;
+    progressEvents.clear();
+    rebuildDistanceTicks();
     setRouteWaypoints(mappedWps);
     renderWaypoints();
     rebuildKmMarkers();
@@ -323,6 +355,8 @@ function selectDevice(deviceId, { focus = false } = {}) {
   renderLegend();
   renderWaypoints();
   renderToggles();
+  const pos = lastPositions.get(deviceId);
+  if (pos) updateMarker(pos);
   if (focus) {
     // focus handled within visualization renderLegend
   }
@@ -339,7 +373,9 @@ async function refreshDevices() {
       { id: 10002, name: "Debug Rider 2" },
       { id: 10003, name: "Debug Rider 3" },
       { id: 10004, name: "Debug Rider 4" },
-      { id: 10005, name: "Debug Rider 5" }
+      { id: 10005, name: "Debug Rider 5" },
+      { id: 10006, name: "Debug Start (idle)" },
+      { id: 10007, name: "Debug Finish (stopped)" }
     );
   }
   devices.clear();
@@ -386,26 +422,142 @@ function updatePositionHistory(deviceId, coords, timeMs) {
   positionsHistory.set(deviceId, list);
 }
 
+function ensureProgressEvents(deviceId) {
+  let entry = progressEvents.get(deviceId);
+  if (!entry) {
+    entry = { km: new Map(), waypoints: new Map(), backfilled: false };
+    progressEvents.set(deviceId, entry);
+  }
+  return entry;
+}
+
+function backfillProgressFromHistory(deviceId) {
+  const events = ensureProgressEvents(deviceId);
+  if (events.backfilled) return;
+  const hist = positionsHistory.get(deviceId) || [];
+  if (!hist.length) return;
+  let maxDist = 0;
+  let lastTime = null;
+  let firstDist = null;
+  let firstTime = null;
+  let lastDist = null;
+  let hint = null;
+  hist.forEach((sample) => {
+    if (!Number.isFinite(sample.t)) return;
+    const proj = projectOnRouteWithHint({ lat: sample.lat, lng: sample.lng }, hint);
+    if (!proj || proj.distanceAlong == null) return;
+    const dist = proj.distanceAlong;
+    if (firstDist == null) {
+      firstDist = dist;
+      firstTime = sample.t;
+    }
+    maxDist = Math.max(maxDist, dist);
+    lastTime = sample.t;
+    if (lastDist != null) {
+      distanceTicks.forEach((tick) => {
+        if (events.km.has(tick)) return;
+        const crossed = dist >= tick && lastDist < tick;
+        if (crossed) events.km.set(tick, sample.t);
+      });
+      routeWaypoints.forEach((wp, idx) => {
+        const key = `${idx}:${Math.round(wp.distanceAlong)}`;
+        if (events.waypoints.has(key)) return;
+        const crossed = dist >= wp.distanceAlong && lastDist < wp.distanceAlong;
+        if (crossed) {
+          events.waypoints.set(key, { name: wp.name, distanceAlong: wp.distanceAlong, timeMs: sample.t });
+        }
+      });
+    }
+    lastDist = dist;
+    hint = dist;
+  });
+  if (maxDist >= 0 && lastTime != null) {
+    distanceTicks.forEach((tick) => {
+      if (events.km.has(tick)) return;
+      if (maxDist >= tick) {
+        const t = firstDist != null && tick <= firstDist ? firstTime : lastTime;
+        events.km.set(tick, t);
+      }
+    });
+    routeWaypoints.forEach((wp, idx) => {
+      const key = `${idx}:${Math.round(wp.distanceAlong)}`;
+      if (events.waypoints.has(key)) return;
+      if (maxDist >= wp.distanceAlong) {
+        const t = firstDist != null && wp.distanceAlong <= firstDist ? firstTime : lastTime;
+        events.waypoints.set(key, { name: wp.name, distanceAlong: wp.distanceAlong, timeMs: t });
+      }
+    });
+  }
+  events.backfilled = true;
+}
+
+function recordProgressEvents(deviceId, prevProj, currProj, timeMs) {
+  backfillProgressFromHistory(deviceId);
+  if (!currProj || currProj.distanceAlong == null || !timeMs) return;
+  const prev = prevProj?.distanceAlong ?? null;
+  const curr = currProj.distanceAlong;
+  const events = ensureProgressEvents(deviceId);
+  distanceTicks.forEach((tick) => {
+    if (events.km.has(tick)) return;
+    const crossed = prev == null ? curr >= tick : curr >= tick && prev < tick;
+    if (crossed) events.km.set(tick, timeMs);
+  });
+  routeWaypoints.forEach((wp, idx) => {
+    const key = `${idx}:${Math.round(wp.distanceAlong)}`;
+    if (events.waypoints.has(key)) return;
+    const crossed = prev == null ? curr >= wp.distanceAlong : curr >= wp.distanceAlong && prev < wp.distanceAlong;
+    if (crossed) {
+      events.waypoints.set(key, { name: wp.name, distanceAlong: wp.distanceAlong, timeMs });
+    }
+  });
+}
+
+function getProgressHistory(deviceId) {
+  const events = progressEvents.get(deviceId);
+  if (!events) return { distances: [], waypoints: [] };
+  const distances = Array.from(events.km.entries())
+    .map(([distanceAlong, timeMs]) => ({ distanceAlong, timeMs }))
+    .sort((a, b) => a.distanceAlong - b.distanceAlong);
+  const waypoints = Array.from(events.waypoints.values()).sort(
+    (a, b) => a.distanceAlong - b.distanceAlong
+  );
+  return { distances, waypoints };
+}
+
 function handlePosition(position) {
   if (!filterDevice(position.deviceId)) return;
   const time = position.deviceTime || position.fixTime || position.serverTime;
   const timeMs = time ? Date.parse(time) : null;
   const coords = [position.latitude, position.longitude];
   if (time) lastSeen.set(position.deviceId, time);
+  const prevProj = lastProjection.get(position.deviceId);
   lastPositions.set(position.deviceId, position);
+  if (position.projHintDistanceAlong != null) {
+    const t = timeMs || Date.now();
+    lastProjection.set(position.deviceId, { distanceAlong: position.projHintDistanceAlong, t });
+  }
   if (timeMs) updatePositionHistory(position.deviceId, coords, timeMs);
   const prog = getDeviceProgress(position.deviceId);
   markActiveOnRoute(position.deviceId, prog, activeStartTimes, timeMs || Date.now());
+  if (timeMs) recordProgressEvents(position.deviceId, prevProj, prog?.proj, timeMs);
   updateMarker(position);
 }
 
 async function refreshPositions() {
   let positions = [];
-  positions = await fetchPositions(config, {
-    debugState,
-    routeTotalOverride: getRouteTotal(),
-    routePointsOverride: getRoutePoints(),
-  });
+  if (config?.traccarUrl && config?.token) {
+    positions = await fetchPositions(config);
+  }
+  if (config?.debug) {
+    const debugPos = buildDebugPositions(
+      debugState,
+      config,
+      getRouteTotal(),
+      getRoutePoints(),
+      positionsHistory
+    );
+    positions.push(...debugPos);
+  }
   positions.forEach(handlePosition);
   renderLegend();
   renderWaypoints();
@@ -443,6 +595,7 @@ function setupUiBindings() {
     computeEta: computeEtaForDevice,
     getDeviceProgress,
     getAverageSpeedMs: getAverageSpeedForDevice,
+    getProgressHistory,
     isStale,
     formatDateTimeFull,
     formatTimeLabel,
