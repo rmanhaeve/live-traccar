@@ -323,6 +323,11 @@ body {
   border-color: #6b7280;
 }
 
+.legend-control .legend-dot.selected {
+  background: #f97316;
+  border-color: #f97316;
+}
+
 .legend-control .legend-dot.you {
   background: #22c55e;
   border-color: #16a34a;

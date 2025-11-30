@@ -12,6 +12,11 @@ const colors = [
   "#6366f1",
 ];
 
+const SELECTED_COLOR = {
+  stroke: "#f97316",
+  fill: "#fb923c",
+};
+
 const state = {
   config: null,
   t: (k) => k,
@@ -160,7 +165,7 @@ function getElevationPadding(w, h) {
   return Math.max(28, pad);
 }
 
-function createCollapsiblePanel(container, title, prefKey) {
+function createCollapsiblePanel(container, title, prefKey, icons = { collapsed: "▶", expanded: "▼" }) {
   const prefs = state.getPanelPreferences ? state.getPanelPreferences() : {};
   if (prefKey && prefs[prefKey]) {
     container.classList.add("collapsed");
@@ -169,16 +174,18 @@ function createCollapsiblePanel(container, title, prefKey) {
   header.type = "button";
   header.className = "panel-toggle";
   const titleSpan = document.createElement("span");
+  titleSpan.className = "panel-toggle-text";
   titleSpan.textContent = title;
   const icon = document.createElement("span");
   icon.className = "panel-toggle-icon";
-  icon.textContent = "▼";
+  icon.textContent = icons.expanded || "▼";
   header.append(titleSpan, icon);
   const body = document.createElement("div");
   body.className = "panel-body";
   const setIcon = () => {
     const collapsed = container.classList.contains("collapsed");
-    icon.textContent = collapsed ? "▼" : "▲";
+    container.classList.toggle("expanded", !collapsed);
+    icon.textContent = collapsed ? icons.collapsed || "▶" : icons.expanded || "▼";
   };
   setIcon();
   header.addEventListener("click", (e) => {
@@ -739,7 +746,12 @@ function ensureLegend() {
       state.legendContainer = L.DomUtil.create("div", "legend-control collapsible-panel");
       L.DomEvent.disableClickPropagation(state.legendContainer);
       L.DomEvent.disableScrollPropagation(state.legendContainer);
-      state.legendBody = createCollapsiblePanel(state.legendContainer, state.t("legend"), "legendCollapsed");
+      state.legendBody = createCollapsiblePanel(
+        state.legendContainer,
+        state.t("legend"),
+        "legendCollapsed",
+        { collapsed: "▲", expanded: "▼" }
+      );
       state.legendBody.classList.add("legend-body");
       return state.legendContainer;
     };
@@ -761,7 +773,9 @@ export function renderLegend() {
     btn.dataset.deviceId = String(device.id);
     if (device.id === state.getSelectedDeviceId()) btn.classList.add("selected");
     const dot = document.createElement("span");
-    dot.className = `legend-dot ${state.isStale(device.id) ? "stale" : "live"}`;
+    const dotClasses = ["legend-dot", state.isStale(device.id) ? "stale" : "live"];
+    if (device.id === state.getSelectedDeviceId()) dotClasses.push("selected");
+    dot.className = dotClasses.join(" ");
     const label = document.createElement("span");
     const name = device.name || `Device ${device.id}`;
     const prog = state.getDeviceProgress(device.id);
@@ -810,6 +824,7 @@ export function renderLegend() {
     item.appendChild(btn);
     body.appendChild(item);
   }
+  updateAllMarkerStyles();
 }
 
 export function renderToggles() {
@@ -870,6 +885,23 @@ export function renderToggles() {
   state.toggleBody.appendChild(youRow);
 }
 
+function applyMarkerStyle(deviceId) {
+  const marker = state.markers.get(deviceId);
+  if (!marker) return;
+  const stale = state.isStale(deviceId);
+  const isSelected = state.getSelectedDeviceId && state.getSelectedDeviceId() === deviceId;
+  const color = isSelected ? SELECTED_COLOR.stroke : stale ? "#6b7280" : "#0c8bc7";
+  const fillColor = isSelected ? SELECTED_COLOR.fill : stale ? "#9ca3af" : "#0c8bc7";
+  marker.setStyle({
+    color,
+    fillColor,
+  });
+}
+
+function updateAllMarkerStyles() {
+  state.markers.forEach((_marker, id) => applyMarkerStyle(id));
+}
+
 export function updateMarker(position) {
   if (!state.filterDevice(position.deviceId)) return;
   const device = state.devices.get(position.deviceId);
@@ -914,6 +946,7 @@ export function updateMarker(position) {
     color: stale ? "#6b7280" : "#0c8bc7",
     fillColor: stale ? "#9ca3af" : "#0c8bc7",
   });
+  applyMarkerStyle(position.deviceId);
   const avgMs = state.getAverageSpeedMs(position.deviceId);
   const speed = avgMs ? ` • ${Math.round(avgMs * 3.6 * 10) / 10} km/h` : "";
   const posLabel =
