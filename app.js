@@ -1,1393 +1,482 @@
-(() => {
-  const statusEl = document.getElementById("status");
-  const titleEl = document.getElementById("title");
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_TEXTS,
+  TRANSLATIONS_MAP,
+  LANGUAGE_COOKIE,
+  HISTORY_WINDOW_MS,
+} from "./src/constants.js";
+import {
+  parseGpx,
+  buildRouteProfile,
+  mapWaypoints,
+  projectOnRoute,
+  projectOnRouteWithHint,
+  pointAtDistance,
+  getRouteDistances,
+  getRoutePoints,
+  getRouteTotal,
+} from "./src/route.js";
+import {
+  computeDeviceProgress,
+  computeEta,
+  getAverageSpeedMs,
+  getRecentHeading,
+  markActiveOnRoute,
+} from "./src/stats.js";
+import { fetchDevices, fetchPositions, fetchRecentHistory } from "./src/traccar.js";
+import { buildDebugPositions, installDebugInfoHook } from "./src/debug.js";
+import {
+  setupVisualization,
+  initMap,
+  initContextMenu,
+  renderRoute,
+  rebuildKmMarkers,
+  renderWaypoints,
+  renderLegend,
+  renderToggles,
+  updateMarker,
+  extendBounds,
+  fitToData,
+  clearRoute,
+  setRouteWaypoints,
+  startViewerLocation as vizStartViewerLocation,
+  stopViewerLocation as vizStopViewerLocation,
+  updateHelpContent,
+} from "./src/visualization.js";
 
-  const colors = [
-    "#ef4444",
-    "#8b5cf6",
-    "#10b981",
-    "#3b82f6",
-    "#f59e0b",
-    "#ec4899",
-    "#14b8a6",
-    "#6366f1",
-  ];
+const statusEl = document.getElementById("status");
+const titleEl = document.getElementById("title");
+let config = { ...DEFAULT_CONFIG };
+let texts = { ...DEFAULT_TEXTS };
+let currentLanguage = "en";
+let selectedDeviceId = null;
+let refreshTimer;
+let downloadButton;
+let langSelector;
+let userPreferences;
 
-  let colorIdx = 0;
-  let map;
-  let bounds;
-  let boundsDirty = false;
-  let autoFit = true;
-  let config;
-  const trackLayers = [];
-  let kmMarkerGroup;
-  let legendControl;
-  let legendContainer;
-  const markers = new Map();
-  const debugState = new Map();
-  const projectionLines = new Map();
-  const lastSeen = new Map();
-  const lastPositions = new Map();
-  const positionsHistory = new Map();
-  const lastProjection = new Map();
-  const activeStartTimes = new Map();
-  let viewerMarker;
-  let viewerWatchId;
-  let devices = new Map();
-  let refreshTimer;
-  const trackData = [];
-  let contextMenuEl;
-  let longPressTimer;
-  let longPressPos;
-  let selectedDeviceId = null;
-  let routePoints = [];
-  let routeDistances = [];
-  let routeWaypoints = [];
-  let routeAvgLat = 0;
-  let waypointGroup;
-  let markerToggleControl;
-  let toggleContainer;
-  let helpPopupEl;
-  let routeTotal = 0;
-  let texts;
-  let langSelector;
-  let currentLanguage;
-  let downloadButton;
-  let userPreferences;
+const devices = new Map();
+const lastSeen = new Map();
+const lastPositions = new Map();
+const positionsHistory = new Map();
+const lastProjection = new Map();
+const activeStartTimes = new Map();
+const debugState = new Map();
 
-  const LANGUAGE_COOKIE = "tracker_lang";
+function t(key, vars = {}) {
+  const str = (texts && texts[key]) || DEFAULT_TEXTS[key] || key;
+  return Object.keys(vars).reduce((acc, k) => acc.replace(`{${k}}`, vars[k]), str);
+}
 
-  const defaults = {
-    title: "Live Tracker",
-    refreshSeconds: 10,
-    deviceIds: null,
-    kmMarkerInterval: 1,
-    showViewerLocation: false,
-    staleMinutes: 15,
-    startTime: null,
-    showKmMarkers: true,
-    showWaypoints: true,
-    debug: false,
-  };
-
-  const defaultTexts = {
-    eta: "ETA",
-    etaHere: "ETA here: {eta}",
-    passed: "passed",
-    offtrack: "participant not on track",
-    unknown: "unknown",
-    next: "Next",
-    offrouteLabel: "off-route",
-    helpTip:
-      "Select a participant to see live ETAs to waypoints. Right-click or long-press the map for Google Maps/Waze/coords and ETA to that point.",
-    helpTitle: "Live Tracker Tips",
-    toggleKm: "Show km markers",
-    toggleWp: "Show waypoints",
-    copyCoords: "Copy coordinates",
-    openGoogle: "Open in Google Maps",
-    openWaze: "Open in Waze",
-    you: "You",
-    toggleYou: "Show your location",
-    downloadGpx: "Download GPX",
-  };
-
-  const translationsMap = {
-    en: "translations/en.json",
-    nl: "translations/nl.json",
-    sv: "translations/sv.json",
-  };
-
-  const HISTORY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
-  const ACTIVE_DISTANCE_THRESHOLD = 50; // meters from start
-
-  function t(key, vars = {}) {
-    const str = (texts && texts[key]) || defaultTexts[key] || key;
-    return Object.keys(vars).reduce((acc, k) => acc.replace(`{${k}}`, vars[k]), str);
+function setStatus(text, isError = false) {
+  if (isError && text) {
+    // eslint-disable-next-line no-alert
+    alert(text);
   }
+  if (statusEl) statusEl.textContent = text || "";
+}
 
-  function nextColor() {
-    const color = colors[colorIdx % colors.length];
-    colorIdx += 1;
-    return color;
+function formatTimeLabel(timeStr) {
+  if (!timeStr) return "";
+  const d = new Date(timeStr);
+  if (Number.isNaN(d.getTime())) return "";
+  const today = new Date();
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  if (sameDay) {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${d.toLocaleTimeString(
+    [],
+    { hour: "2-digit", minute: "2-digit" }
+  )}`;
+}
 
-  function setStatus(text, isError = false) {
-    if (isError && text) {
-      // Use an alert for visibility when errors occur; no status shown otherwise.
-      // eslint-disable-next-line no-alert
-      alert(text);
-    }
-  }
+function formatDateTimeFull(timeStr) {
+  if (!timeStr) return "";
+  const d = timeStr instanceof Date ? timeStr : new Date(timeStr);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
 
-  function initMap() {
-    map = L.map("map", { worldCopyJump: true }).setView([0, 0], 2);
+function getCookie(name) {
+  const parts = document.cookie.split(";").map((c) => c.trim());
+  const match = parts.find((c) => c.startsWith(`${name}=`));
+  if (!match) return null;
+  return decodeURIComponent(match.slice(name.length + 1));
+}
 
-    // Dedicated panes to control stacking order
-    map.createPane("tracksPane");
-    map.getPane("tracksPane").style.zIndex = "400";
-    map.createPane("kmPane");
-    map.getPane("kmPane").style.zIndex = "410";
-    map.createPane("kmLabelPane");
-    map.getPane("kmLabelPane").style.zIndex = "420";
-    map.getPane("kmLabelPane").style.pointerEvents = "none";
-    map.createPane("waypointPane");
-    map.getPane("waypointPane").style.zIndex = "430";
-    map.createPane("livePane");
-    map.getPane("livePane").style.zIndex = "450";
-    map.createPane("viewerPane");
-    map.getPane("viewerPane").style.zIndex = "460";
+function setCookie(name, value, days = 365) {
+  const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
+}
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-      maxZoom: 19,
-    }).addTo(map);
-    kmMarkerGroup = L.layerGroup().addTo(map);
-    waypointGroup = L.layerGroup().addTo(map);
-    map.on("zoomend", rebuildKmMarkers);
-    map.on("movestart", () => {
-      autoFit = false;
-    });
-    map.on("contextmenu", (e) => {
-      e.originalEvent.preventDefault();
-      showContextMenu(e.latlng, e.containerPoint);
-    });
-    bounds = L.latLngBounds();
-    boundsDirty = false;
-  }
-
-  function extendBounds(point) {
-    bounds.extend(point);
-    boundsDirty = true;
-  }
-
-  function toRad(deg) {
-    return (deg * Math.PI) / 180;
-  }
-
-  function distanceMeters(a, b) {
-    const R = 6371000;
-    const dLat = toRad(b[0] - a[0]);
-    const dLon = toRad(b[1] - a[1]);
-    const lat1 = toRad(a[0]);
-    const lat2 = toRad(b[0]);
-    const sinDLat = Math.sin(dLat / 2);
-    const sinDLon = Math.sin(dLon / 2);
-    const h =
-      sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLon * sinDLon;
-    return 2 * R * Math.asin(Math.sqrt(h));
-  }
-
-  function interpolatePoint(a, b, ratio) {
-    return [a[0] + (b[0] - a[0]) * ratio, a[1] + (b[1] - a[1]) * ratio];
-  }
-
-  function getKmIntervalForZoom(zoom) {
-    const base = Number(config?.kmMarkerInterval ?? defaults.kmMarkerInterval);
-    if (!base || base <= 0) return 0;
-    const z = zoom || 0;
-    if (z >= 16) return base * 0.25;
-    if (z >= 14) return base * 0.5;
-    if (z >= 12) return base;
-    if (z >= 10) return base * 5;
-    return base * 10;
-  }
-
-  async function loadConfig() {
-    try {
-      const res = await fetch("config.json", { cache: "no-store" });
-      if (!res.ok) throw new Error("config.json missing");
-      const cfg = await res.json();
-      config = {
-        ...defaults,
-        ...cfg,
-      };
-      applySavedTogglePreferences();
-      texts = { ...defaultTexts };
-      setStatus("");
-      const pageTitle = config.title || defaults.title;
-      titleEl.textContent = pageTitle;
-      document.title = pageTitle;
-      rebuildKmMarkers();
-      renderWaypoints();
-      renderToggles();
-      renderLegend();
-      persistToggles();
-    } catch (err) {
-      setStatus("");
-    }
-  }
-
-  function parseGpx(xmlText) {
-    const xml = new DOMParser().parseFromString(xmlText, "application/xml");
-    const error = xml.querySelector("parsererror");
-    if (error) throw new Error("GPX parse error");
-    const segments = [];
-    const trackNodes = Array.from(xml.getElementsByTagName("trk"));
-    trackNodes.forEach((trk) => {
-      const segs = Array.from(trk.getElementsByTagName("trkseg"));
-      segs.forEach((seg) => {
-        const pts = Array.from(seg.getElementsByTagName("trkpt")).map((pt) => [
-          Number(pt.getAttribute("lat")),
-          Number(pt.getAttribute("lon")),
-        ]);
-        if (pts.length) segments.push(pts);
-      });
-    });
-    const waypoints = Array.from(xml.getElementsByTagName("wpt")).map((wpt) => ({
-      lat: Number(wpt.getAttribute("lat")),
-      lng: Number(wpt.getAttribute("lon")),
-      name: wpt.querySelector("name")?.textContent?.trim(),
-      desc: wpt.querySelector("desc")?.textContent?.trim(),
-    }));
-    return { segments, waypoints };
-  }
-
-  async function loadTranslations(preferredLang) {
-    const prefs = readPreferences();
-    const savedLang = preferredLang || prefs.lang;
-    const browserLang = (navigator.language || "en").slice(0, 2).toLowerCase();
-    const targetLang =
-      savedLang ||
-      Object.keys(translationsMap).find((code) => code === browserLang) ||
-      null;
-    let path;
-    if (targetLang && translationsMap[targetLang]) {
-      path = translationsMap[targetLang];
-      currentLanguage = targetLang;
-    } else if (config?.translationFile) {
-      path = config.translationFile;
-      currentLanguage = targetLang || "en";
-    } else {
-      path = translationsMap.en || "translations/en.json";
-      currentLanguage = "en";
-    }
-    persistPreferences({
-      lang: currentLanguage,
-      toggles: prefs.toggles,
-    });
-    try {
-      const res = await fetch(path, { cache: "no-store" });
-      if (!res.ok) throw new Error("no translation file");
-      const data = await res.json();
-      texts = { ...defaultTexts, ...data };
-    } catch (err) {
-      texts = { ...defaultTexts };
-    }
-    updateLangSelector();
-    updateHelpContent();
-    updateDownloadButtonLabel();
-    renderLegend();
-    renderWaypoints();
-    renderToggles();
-  }
-
-  function addKmMarkersForSegments(segments, color, intervalKm) {
-    if (!intervalKm || intervalKm <= 0 || !kmMarkerGroup) return;
-    const intervalMeters = intervalKm * 1000;
-    let total = 0;
-    let nextMark = intervalMeters;
-    const points = [];
-    segments.forEach((seg) => {
-      if (seg.length < 2) return;
-      for (let i = 1; i < seg.length; i += 1) {
-        const prev = seg[i - 1];
-        const curr = seg[i];
-        const segDist = distanceMeters(prev, curr);
-        const startTotal = total;
-        total += segDist;
-        while (nextMark <= total && segDist > 0) {
-          const ratio = (nextMark - startTotal) / segDist;
-          const pt = interpolatePoint(prev, curr, ratio);
-          points.push({ km: nextMark / 1000, coord: pt });
-          nextMark += intervalMeters;
-        }
-      }
-    });
-
-    points.forEach((point) => {
-      const marker = L.circleMarker(point.coord, {
-        radius: 5,
-        color,
-        weight: 2,
-        fillColor: "#ffffff",
-        fillOpacity: 1,
-        pane: "kmPane",
-      }).addTo(kmMarkerGroup);
-      marker.bindTooltip(`${point.km} km`, {
-        permanent: true,
-        direction: "top",
-        className: "km-label",
-        offset: [0, -2],
-        pane: "kmLabelPane",
-      });
-      extendBounds(point.coord);
-    });
-  }
-
-  function rebuildKmMarkers() {
-    if (!kmMarkerGroup || !map) return;
-    kmMarkerGroup.clearLayers();
-    if (!config?.showKmMarkers) return;
-    const intervalKm = getKmIntervalForZoom(map.getZoom());
-    if (!intervalKm || intervalKm <= 0) return;
-    if (routePoints.length) {
-      addKmMarkersForSegments(trackData[0]?.segments || [], trackData[0]?.color || "#0c8bc7", intervalKm);
-    }
-  }
-
-  // Robust matching: precompute XY coords and segment angles, and a matcher function that
-  // uses global search + local window + continuity + heading.
-  function buildRouteProfile(segments) {
-    routePoints = [];
-    routeDistances = [];
-    routeAvgLat = 0;
-    segments.forEach((seg) => {
-      seg.forEach((pt) => routePoints.push({ lat: pt[0], lng: pt[1] }));
-    });
-    if (!routePoints.length) return;
-    routeAvgLat = routePoints.reduce((sum, p) => sum + p.lat, 0) / routePoints.length;
-    routeDistances = new Array(routePoints.length).fill(0);
-    for (let i = 1; i < routePoints.length; i += 1) {
-      routeDistances[i] =
-        routeDistances[i - 1] + distanceMeters([routePoints[i - 1].lat, routePoints[i - 1].lng], [routePoints[i].lat, routePoints[i].lng]);
-    }
-    routeTotal = routeDistances[routeDistances.length - 1] || 0;
-    // precompute projected XY and segment angles for faster matching
-    const rad = Math.PI / 180;
-    const R = 6371000;
-    const refLat = routeAvgLat || (routePoints[0] && routePoints[0].lat) || 0;
-    for (let i = 0; i < routePoints.length; i += 1) {
-      const p = routePoints[i];
-      p._x = p.lng * rad * Math.cos(refLat * rad) * R;
-      p._y = p.lat * rad * R;
-    }
-    for (let i = 0; i < routePoints.length - 1; i += 1) {
-      const a = routePoints[i];
-      const b = routePoints[i + 1];
-      const dx = b._x - a._x;
-      const dy = b._y - a._y;
-      a._segAngle = Math.atan2(dy, dx);
-      a._segLen2 = dx * dx + dy * dy;
-    }
-  }
-
-  function matchPositionToRoute(latlng, opts = {}) {
-    // opts: { hintDistanceAlong, headingDeg }
-    if (!routePoints.length) return null;
-    const refLat = routeAvgLat || latlng.lat;
-    const rad = Math.PI / 180;
-    const R = 6371000;
-    const tx = latlng.lng * rad * Math.cos(refLat * rad) * R;
-    const ty = latlng.lat * rad * R;
-    const hint = opts.hintDistanceAlong;
-    const wantHeading = Number.isFinite(opts.headingDeg);
-    const headingRad = wantHeading ? (opts.headingDeg * Math.PI) / 180 : null;
-
-    // global scan to find a few best candidates
-    const candidates = [];
-    for (let i = 0; i < routePoints.length - 1; i += 1) {
-      const a = routePoints[i];
-      const b = routePoints[i + 1];
-      const seg = { x: b._x - a._x, y: b._y - a._y };
-      const segLen2 = a._segLen2 || (seg.x * seg.x + seg.y * seg.y);
-      if (segLen2 === 0) continue;
-      const apx = tx - a._x;
-      const apy = ty - a._y;
-      let t = (apx * seg.x + apy * seg.y) / segLen2;
-      t = Math.max(0, Math.min(1, t));
-      const px = a._x + seg.x * t;
-      const py = a._y + seg.y * t;
-      const d2 = (px - tx) * (px - tx) + (py - ty) * (py - ty);
-      const segDist = (routeDistances[i] || 0) + Math.sqrt(segLen2) * t;
-      let angleScore = 0;
-      if (wantHeading) {
-        const segAngle = a._segAngle;
-        let diff = Math.abs(segAngle - headingRad);
-        diff = Math.min(diff, Math.abs(2 * Math.PI - diff));
-        angleScore = Math.cos(diff);
-      }
-      // score uses distance (preferred) and angle if available
-      const score = (1 / (Math.sqrt(d2) + 1e-3)) * 0.8 + (wantHeading ? angleScore * 0.2 : 0);
-      candidates.push({ i, t, d2, segDist, score, point: { lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t } });
-    }
-    if (!candidates.length) return null;
-    candidates.sort((a, b) => a.d2 - b.d2);
-
-    // pick best candidate but consider hint: prefer candidates near hint
-    let best = candidates[0];
-    if (hint != null) {
-      for (let j = 0; j < Math.min(candidates.length, 10); j += 1) {
-        const c = candidates[j];
-        if (Math.abs(c.segDist - hint) < 200) {
-          best = c;
-          break;
-        }
-      }
-    }
-
-    const offtrack = Math.sqrt(best.d2) > 200;
-    return { dist2: best.d2, distanceAlong: best.segDist, point: best.point, offtrack };
-  }
-
-  function projectOnRoute(latlng) {
-    return matchPositionToRoute(latlng, {});
-  }
-
-  function projectOnRouteWithHint(latlng, hintDistanceAlong, headingDeg = null) {
-    return matchPositionToRoute(latlng, { hintDistanceAlong, headingDeg });
-  }
-
-  function mapWaypoints(rawWaypoints) {
-    if (!routePoints.length) return [];
-    const result = [];
-    rawWaypoints.forEach((wp, idx) => {
-      const proj = projectOnRoute({ lat: wp.lat, lng: wp.lng });
-      if (!proj) return;
-      result.push({
-        name: wp.name || wp.desc || `Point ${idx + 1}`,
-        desc: wp.desc || "",
-        distanceAlong: proj.distanceAlong,
-        coord: proj.point,
-      });
-    });
-    if (!result.length && routePoints.length) {
-      result.push(
-        { name: "Start", distanceAlong: 0, coord: routePoints[0] },
-        {
-          name: "Finish",
-          distanceAlong: routeDistances[routeDistances.length - 1] || 0,
-          coord: routePoints[routePoints.length - 1],
-        }
-      );
-    }
-    result.sort((a, b) => a.distanceAlong - b.distanceAlong);
-    return result;
-  }
-
-  function pointAtDistance(distanceAlong) {
-    if (!routePoints.length || !routeDistances.length) return null;
-    const target = Math.min(Math.max(distanceAlong, 0), routeDistances[routeDistances.length - 1]);
-    let idx = routeDistances.findIndex((d) => d >= target);
-    if (idx <= 0) return routePoints[routePoints.length - 1];
-    if (routeDistances[idx] === target) return routePoints[idx];
-    const prevIdx = idx - 1;
-    const segmentLen = routeDistances[idx] - routeDistances[prevIdx];
-    const t = segmentLen > 0 ? (target - routeDistances[prevIdx]) / segmentLen : 0;
-    const a = routePoints[prevIdx];
-    const b = routePoints[idx];
-    return {
-      lat: a.lat + (b.lat - a.lat) * t,
-      lng: a.lng + (b.lng - a.lng) * t,
-    };
-  }
-
-  function renderWaypoints() {
-    if (!waypointGroup) return;
-    waypointGroup.clearLayers();
-    if (!config?.showWaypoints) return;
-    const minLabelZoom = 13;
-    const markerLayers = [];
-    const makeIcon = (name) => {
-      const temp = document.createElement("span");
-      temp.className = "waypoint-label-inner";
-      temp.textContent = name;
-      temp.style.position = "absolute";
-      temp.style.visibility = "hidden";
-      temp.style.left = "-9999px";
-      document.body.appendChild(temp);
-      const rect = temp.getBoundingClientRect();
-      document.body.removeChild(temp);
-      const size = [Math.ceil(rect.width), Math.ceil(rect.height)];
-      return L.divIcon({
-        className: "waypoint-label-icon",
-        html: `<span class="waypoint-label-inner">${name}</span>`,
-        iconSize: size,
-        iconAnchor: [size[0] / 2, size[1] / 2],
-      });
-    };
-    routeWaypoints.forEach((wp) => {
-      const marker = L.marker([wp.coord.lat, wp.coord.lng], {
-        pane: "waypointPane",
-        icon: makeIcon(wp.name),
-      }).addTo(waypointGroup);
-      markerLayers.push(marker);
-      const eta = selectedDeviceId ? computeEta(selectedDeviceId, wp.distanceAlong) : null;
-      const etaText =
-        eta?.status === "eta" && eta.arrival
-          ? formatDateTimeFull(eta.arrival)
-          : eta?.status === "passed"
-            ? t("passed")
-            : eta?.status === "offtrack"
-              ? t("offtrack")
-              : t("unknown");
-      marker.on("click", () => {
-        const idx = routeWaypoints.indexOf(wp);
-        const next = idx >= 0 && idx < routeWaypoints.length - 1 ? routeWaypoints[idx + 1] : null;
-        const nextLabel = next ? next.name : "Finish";
-        const popupHtml = `<strong>${wp.name}</strong><br>${t("eta")}: ${etaText}<br><span class="muted">${t("next")}: ${nextLabel}</span>`;
-        marker.bindPopup(popupHtml).openPopup();
-      });
-    });
-    const toggleLabels = () => {
-      const show = map.getZoom() >= minLabelZoom;
-      markerLayers.forEach((m) => {
-        const el = m.getElement();
-        if (!el) return;
-        if (show) el.classList.remove("hidden");
-        else el.classList.add("hidden");
-      });
-    };
-    toggleLabels();
-    map.off("zoomend", toggleLabels);
-    map.on("zoomend", toggleLabels);
-  }
-
-  async function loadRoute() {
-    const trackFile = config?.trackFile || "tracks/track.gpx";
-    try {
-      const res = await fetch(trackFile, { cache: "no-store" });
-      if (!res.ok) throw new Error(`Track ${trackFile} missing`);
-      const text = await res.text();
-      const { segments, waypoints } = parseGpx(text);
-      if (!segments.length) throw new Error(`Track ${trackFile} has no segments`);
-      const color = "#0c8bc7";
-      trackLayers.forEach((l) => l.remove());
-      trackLayers.length = 0;
-      kmMarkerGroup.clearLayers();
-      trackData.length = 0;
-      const poly = L.polyline(segments, {
-        color,
-        weight: 4,
-        opacity: 0.8,
-        pane: "tracksPane",
-      }).addTo(map);
-      trackLayers.push(poly);
-      trackData.push({ segments, color });
-      buildRouteProfile(segments);
-      routeWaypoints = mapWaypoints(waypoints || []);
-      renderWaypoints();
-      rebuildKmMarkers();
-      segments.forEach((seg) => seg.forEach((pt) => extendBounds(pt)));
-      fitToData();
-    } catch (err) {
-      console.error(err);
-      setStatus(`Track error: ${trackFile}`, true);
-    }
-  }
-
-  async function fetchJson(path) {
-    const headers = config?.token
-      ? { Authorization: `Bearer ${config.token}` }
-      : {};
-    const res = await fetch(path, { headers, cache: "no-store" });
-    if (!res.ok) throw new Error(`Request failed: ${path}`);
-    return res.json();
-  }
-
-  function cleanBase(url) {
-    return url.replace(/\/+$/, "");
-  }
-
-  async function refreshDevices() {
-    let list = [];
-    if (config?.traccarUrl && config?.token) {
-      const data = await fetchJson(`${cleanBase(config.traccarUrl)}/api/devices`);
-      list = [...data];
-    }
-    if (config?.debug) {
-      list.push(
-        { id: 10001, name: "Debug Rider 1" },
-        { id: 10002, name: "Debug Rider 2" },
-        { id: 10003, name: "Debug Offroute" }
-      );
-    }
-    devices = new Map(list.map((d) => [d.id, d]));
-    renderLegend();
-    if (!selectedDeviceId && list.length) {
-      selectDevice(list[0].id);
-    }
-  }
-
-  async function fetchRecentHistory(deviceId) {
-    if (!config?.traccarUrl || !config?.token) return;
-    if (!filterDevice(deviceId)) return;
-    const now = new Date();
-    const from = new Date(now.getTime() - HISTORY_WINDOW_MS);
-    const params = new URLSearchParams({
-      deviceId: String(deviceId),
-      from: from.toISOString(),
-      to: now.toISOString(),
-    });
-    const url = `${cleanBase(config.traccarUrl)}/api/reports/route?${params.toString()}`;
-    const data = await fetchJson(url);
-    if (!Array.isArray(data)) return;
-    const startMs = config?.startTime ? Date.parse(config.startTime) : null;
-    const samples = data
-      .map((p) => {
-        const time = p.deviceTime || p.fixTime || p.serverTime;
-        const t = time ? Date.parse(time) : NaN;
-        return { t, lat: p.latitude, lng: p.longitude };
-      })
-      .filter((p) => Number.isFinite(p.t) && (!startMs || p.t >= startMs))
-      .sort((a, b) => a.t - b.t);
-    positionsHistory.set(deviceId, samples);
-  }
-
-  async function preloadHistory() {
-    if (config?.debug) return;
-    if (!config?.traccarUrl || !config?.token) return;
-    const ids = Array.from(devices.keys()).filter((id) => filterDevice(id));
-    await Promise.all(ids.map((id) => fetchRecentHistory(id).catch((err) => console.error(err))));
-  }
-
-  function markActiveOnRoute(deviceId, progress, timeMs) {
-    if (!progress || progress.offtrack) return;
-    if (progress.proj?.distanceAlong == null) return;
-    if (progress.proj.distanceAlong < ACTIVE_DISTANCE_THRESHOLD) return;
-    if (!activeStartTimes.has(deviceId)) {
-      activeStartTimes.set(deviceId, timeMs || Date.now());
-    }
-  }
-
-  function filterDevice(id) {
-    if (config?.debug) return true;
-    if (!config?.deviceIds || !Array.isArray(config.deviceIds)) return true;
-    return config.deviceIds.includes(id);
-  }
-
-  function updateMarker(position) {
-    const device = devices.get(position.deviceId);
-    if (!filterDevice(position.deviceId)) return;
-    const name = device?.name || `Device ${position.deviceId}`;
-    const time = position.deviceTime || position.fixTime || position.serverTime;
-    const timeMs = time ? Date.parse(time) : null;
-    if (time) lastSeen.set(position.deviceId, time);
-    lastPositions.set(position.deviceId, position);
-    const coords = [position.latitude, position.longitude];
-    if (timeMs) {
-      const startMs = config?.startTime ? Date.parse(config.startTime) : null;
-      if (!startMs || timeMs >= startMs) {
-        const list = positionsHistory.get(position.deviceId) || [];
-        list.push({ t: timeMs, lat: coords[0], lng: coords[1] });
-        const cutoff = Date.now() - HISTORY_WINDOW_MS;
-        while (list.length && list[0].t < cutoff) list.shift();
-        positionsHistory.set(position.deviceId, list);
-      }
-    }
-    if (!markers.has(position.deviceId)) {
-      const marker = L.circleMarker(coords, {
-        radius: 8,
-        color: "#0c8bc7",
-        fillColor: "#0c8bc7",
-        fillOpacity: 0.8,
-        pane: "livePane",
-      }).addTo(map);
-      marker.bindTooltip(name);
-      markers.set(position.deviceId, marker);
-    }
-    const marker = markers.get(position.deviceId);
-    marker.setLatLng(coords);
-    marker.bringToFront();
-    const prog = getDeviceProgress(position.deviceId);
-    markActiveOnRoute(position.deviceId, prog, timeMs);
-    const projPoint = prog?.proj?.point;
-    if (projPoint) {
-      let line = projectionLines.get(position.deviceId);
-      const latlngs = [coords, [projPoint.lat, projPoint.lng]];
-      if (!line) {
-        line = L.polyline(latlngs, {
-          color: "#6b7280",
-          weight: 2,
-          dashArray: "4 4",
-          pane: "livePane",
-        }).addTo(map);
-        projectionLines.set(position.deviceId, line);
-      } else {
-        line.setLatLngs(latlngs);
-      }
-    }
-    const stale = isStale(position.deviceId);
-    marker.setStyle({
-      color: stale ? "#6b7280" : "#0c8bc7",
-      fillColor: stale ? "#9ca3af" : "#0c8bc7",
-    });
-    const avgMs = getAverageSpeedMs(position.deviceId);
-    const speed = avgMs ? ` • ${Math.round(avgMs * 3.6 * 10) / 10} km/h` : "";
-    const content = `${name}${speed}<br><span class="muted">${formatDateTimeFull(time) || ""}</span>`;
-    const popup = marker.getPopup();
-    if (popup) {
-      popup.setContent(content);
-    } else {
-      marker.bindPopup(content);
-    }
-    extendBounds(coords);
-  }
-
-  async function refreshPositions() {
-    let positions = [];
-    if (config?.traccarUrl && config?.token) {
-      const url = `${cleanBase(config.traccarUrl)}/api/positions`;
-      positions = await fetchJson(url);
-    }
-    if (config?.debug) {
-      const debugPos = buildDebugPositions();
-      positions.push(...debugPos);
-    }
-    positions.forEach(updateMarker);
-    renderLegend();
-    renderWaypoints();
-    fitToData();
-  }
-
-  function buildDebugPositions() {
-    const now = new Date().toISOString();
-    if (!routeTotal || !routePoints.length) {
-      return [
-        { deviceId: 10001, latitude: 0, longitude: 0, speed: 0, deviceTime: now },
-        { deviceId: 10002, latitude: 0.01, longitude: 0.01, speed: 0, deviceTime: now },
-        { deviceId: 10003, latitude: 0.02, longitude: 0.02, speed: 0, deviceTime: now },
-      ];
-    }
-    const stepSeconds = config?.refreshSeconds || defaults.refreshSeconds;
-    const debugSpeedMs = 6; // ~22 km/h
-    const deltaFraction = routeTotal > 0 ? (debugSpeedMs * stepSeconds) / routeTotal : 0;
-    const onTrack = (deviceId, initialFraction) => {
-      const state = debugState.get(deviceId) || { fraction: initialFraction };
-      state.fraction = Math.min(1, state.fraction + deltaFraction);
-      debugState.set(deviceId, state);
-      const dist = routeTotal * state.fraction;
-      const pt = pointAtDistance(dist) || routePoints[0];
-      return {
-        deviceId,
-        latitude: pt.lat,
-        longitude: pt.lng,
-        speed: debugSpeedMs / 0.514444, // convert m/s to knots
-        deviceTime: now,
-      };
-    };
-    const offTrack = () => {
-      const mid = pointAtDistance(routeTotal * 0.5) || { lat: 0, lng: 0 };
-      return {
-        deviceId: 10003,
-        latitude: mid.lat + 0.05,
-        longitude: mid.lng + 0.05,
-        speed: 0,
-        deviceTime: now,
-      };
-    };
-    return [onTrack(10001, Math.random() * 0.8), onTrack(10002, 0.2 + Math.random() * 0.6), offTrack()];
-  }
-
-  function fitToData() {
-    if (!bounds.isValid() || !boundsDirty || !autoFit) return;
-    map.fitBounds(bounds, { maxZoom: 16, padding: [30, 30] });
-    boundsDirty = false;
-  }
-
-  function startViewerLocation() {
-    if (!config?.showViewerLocation || !("geolocation" in navigator)) return;
-    if (viewerWatchId != null) return;
-    const opts = { enableHighAccuracy: true, maximumAge: 15000, timeout: 10000 };
-    const onPos = (pos) => {
-      const { latitude, longitude, accuracy } = pos.coords;
-      const latlng = [latitude, longitude];
-      if (!viewerMarker) {
-        viewerMarker = L.circleMarker(latlng, {
-          radius: 9,
-          color: "#16a34a",
-          fillColor: "#22c55e",
-          fillOpacity: 0.85,
-          weight: 2,
-          pane: "viewerPane",
-        }).addTo(map);
-        viewerMarker.bindTooltip(t("you"), { direction: "top", offset: [0, -4] });
-      } else {
-        viewerMarker.setLatLng(latlng);
-      }
-      viewerMarker.setPopupContent(`${t("you")}<br><span class="muted">±${Math.round(accuracy)} m</span>`);
-      viewerMarker.bringToFront();
-      extendBounds(latlng);
-      fitToData();
-    };
-    const onErr = (err) => {
-      console.warn("Geolocation error", err);
-    };
-    viewerWatchId = navigator.geolocation.watchPosition(onPos, onErr, opts);
-  }
-
-  function ensureLegend() {
-    if (!map) return null;
-    if (!legendControl) {
-      legendControl = L.control({ position: "bottomright" });
-      legendControl.onAdd = () => {
-        legendContainer = L.DomUtil.create("div", "legend-control");
-        L.DomEvent.disableClickPropagation(legendContainer);
-        L.DomEvent.disableScrollPropagation(legendContainer);
-        return legendContainer;
-      };
-      legendControl.addTo(map);
-    }
-    return legendContainer;
-  }
-
-  function initHelp() {
-    const trigger = document.getElementById("help-trigger");
-    if (!trigger) return;
-    helpPopupEl = document.createElement("div");
-    helpPopupEl.className = "help-popup hidden";
-    updateHelpContent();
-    document.body.appendChild(helpPopupEl);
-    const hide = () => helpPopupEl.classList.add("hidden");
-    trigger.addEventListener("click", (e) => {
-      e.stopPropagation();
-      helpPopupEl.classList.toggle("hidden");
-    });
-    document.addEventListener("click", (e) => {
-      if (e.target === trigger || helpPopupEl.contains(e.target)) return;
-      hide();
-    });
-  }
-
-  function updateHelpContent() {
-    if (!helpPopupEl) return;
-    helpPopupEl.innerHTML = `<strong>${t("helpTitle")}</strong><br>${t("helpTip")}`;
-  }
-
-  function initLangSelector() {
-    langSelector = document.getElementById("lang-select");
-    if (!langSelector) return;
-    langSelector.addEventListener("change", async (e) => {
-      const code = e.target.value;
-      persistPreferences({ lang: code });
-      await loadTranslations(code);
-      renderToggles();
-    });
-    updateLangSelector();
-  }
-
-  function updateLangSelector() {
-    if (!langSelector) return;
-    const fallback = "en";
-    const desired = currentLanguage || fallback;
-    const values = Array.from(langSelector.options).map((opt) => opt.value);
-    langSelector.value = values.includes(desired) ? desired : fallback;
-  }
-
-  function getCookie(name) {
-    const parts = document.cookie.split(";").map((c) => c.trim());
-    const match = parts.find((c) => c.startsWith(`${name}=`));
-    if (!match) return null;
-    return decodeURIComponent(match.slice(name.length + 1));
-  }
-
-  function setCookie(name, value, days = 365) {
-    const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
-    document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
-  }
-
-  function readPreferences() {
-    if (userPreferences) return userPreferences;
-    const raw = getCookie(LANGUAGE_COOKIE);
-    if (!raw) {
-      userPreferences = {};
-      return userPreferences;
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object") {
-        userPreferences = parsed;
-        return userPreferences;
-      }
-    } catch (e) {
-      // fall through to legacy value handling
-    }
-    userPreferences = { lang: raw };
+function readPreferences() {
+  if (userPreferences) return userPreferences;
+  const raw = getCookie(LANGUAGE_COOKIE);
+  if (!raw) {
+    userPreferences = {};
     return userPreferences;
   }
-
-  function persistPreferences(partial) {
-    const current = readPreferences();
-    const merged = { ...current, ...partial };
-    userPreferences = merged;
-    setCookie(LANGUAGE_COOKIE, JSON.stringify(merged));
-  }
-
-  function persistToggles() {
-    persistPreferences({
-      toggles: {
-        showKmMarkers: Boolean(config?.showKmMarkers),
-        showWaypoints: Boolean(config?.showWaypoints),
-        showViewerLocation: Boolean(config?.showViewerLocation),
-      },
-    });
-  }
-
-  function applySavedTogglePreferences() {
-    const prefs = readPreferences();
-    const toggles = prefs?.toggles;
-    if (!toggles || typeof toggles !== "object") return;
-    if (typeof toggles.showKmMarkers === "boolean") config.showKmMarkers = toggles.showKmMarkers;
-    if (typeof toggles.showWaypoints === "boolean") config.showWaypoints = toggles.showWaypoints;
-    if (typeof toggles.showViewerLocation === "boolean") config.showViewerLocation = toggles.showViewerLocation;
-  }
-
-  function initDownloadButton() {
-    downloadButton = document.getElementById("download-gpx");
-    if (!downloadButton) return;
-    downloadButton.addEventListener("click", () => {
-      const trackFile = config?.trackFile || "tracks/track.gpx";
-      const link = document.createElement("a");
-      link.href = trackFile;
-      link.download = trackFile.split("/").pop() || "track.gpx";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    });
-    updateDownloadButtonLabel();
-  }
-
-  function updateDownloadButtonLabel() {
-    if (!downloadButton) return;
-    downloadButton.textContent = t("downloadGpx");
-  }
-
-  function hideContextMenu() {
-    if (contextMenuEl) {
-      contextMenuEl.classList.add("hidden");
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      userPreferences = parsed;
+      return userPreferences;
     }
+  } catch (e) {
+    // fall through to legacy value handling
   }
+  userPreferences = { lang: raw };
+  return userPreferences;
+}
 
-  function copyCoords(latlng) {
-    const text = `${latlng.lat.toFixed(6)},${latlng.lng.toFixed(6)}`;
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).catch((err) => console.warn("Copy failed", err));
-    } else {
-      window.prompt("Copy coordinates:", text); // eslint-disable-line no-alert
-    }
-  }
+function persistPreferences(partial) {
+  const current = readPreferences();
+  const merged = { ...current, ...partial };
+  userPreferences = merged;
+  setCookie(LANGUAGE_COOKIE, JSON.stringify(merged));
+}
 
-  function showContextMenu(latlng, containerPoint) {
-    if (!contextMenuEl || !map) return;
-    const rect = map.getContainer().getBoundingClientRect();
-    const x = rect.left + (containerPoint?.x ?? 0);
-    const y = rect.top + (containerPoint?.y ?? 0);
-    contextMenuEl.innerHTML = "";
-    if (selectedDeviceId && routePoints.length) {
-      const targetProj = projectOnRoute(latlng);
-      if (targetProj && !targetProj.offtrack) {
-        const eta = computeEta(selectedDeviceId, targetProj.distanceAlong);
-        const info = document.createElement("div");
-        info.className = "context-info";
-        const etaText =
-          eta.status === "eta" && eta.arrival
-            ? formatDateTimeFull(eta.arrival)
-            : eta.status === "passed"
-              ? t("passed")
-              : eta.status === "offtrack"
-                ? t("offtrack")
-                : t("unknown");
-        info.textContent = t("etaHere", { eta: etaText });
-        contextMenuEl.appendChild(info);
-      }
-    }
-    const items = [
-      {
-        label: t("openGoogle"),
-        action: () =>
-          window.open(
-            `https://www.google.com/maps/search/?api=1&query=${latlng.lat},${latlng.lng}`,
-            "_blank"
-          ),
-      },
-      {
-        label: t("openWaze"),
-        action: () =>
-          window.open(`https://waze.com/ul?ll=${latlng.lat},${latlng.lng}&navigate=yes`, "_blank"),
-      },
-      {
-        label: t("copyCoords"),
-        action: () => copyCoords(latlng),
-      },
-    ];
-    items.forEach((item) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = item.label;
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        hideContextMenu();
-        item.action();
-      });
-      contextMenuEl.appendChild(btn);
-    });
-    contextMenuEl.style.left = `${x}px`;
-    contextMenuEl.style.top = `${y}px`;
-    contextMenuEl.classList.remove("hidden");
-  }
+function persistToggles() {
+  persistPreferences({
+    toggles: {
+      showKmMarkers: Boolean(config?.showKmMarkers),
+      showWaypoints: Boolean(config?.showWaypoints),
+      showViewerLocation: Boolean(config?.showViewerLocation),
+    },
+  });
+}
 
-  function initContextMenu() {
-    contextMenuEl = document.createElement("div");
-    contextMenuEl.className = "context-menu hidden";
-    document.body.appendChild(contextMenuEl);
-    document.addEventListener("click", hideContextMenu);
-    initHelp();
-    if (!map) return;
-    const container = map.getContainer();
-    const longPressMs = 600;
-    const clearTimer = () => {
-      if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
-      }
-    };
-    const startTimer = (touchEvent) => {
-      clearTimer();
-      const touch = touchEvent.touches?.[0];
-      if (!touch) return;
-      longPressPos = { clientX: touch.clientX, clientY: touch.clientY };
-      longPressTimer = setTimeout(() => {
-        const rect = container.getBoundingClientRect();
-        const containerPoint = L.point(
-          longPressPos.clientX - rect.left,
-          longPressPos.clientY - rect.top
-        );
-        const latlng = map.containerPointToLatLng(containerPoint);
-        showContextMenu(latlng, containerPoint);
-      }, longPressMs);
-    };
-    const moveCancel = (e) => {
-      if (!longPressPos) return;
-      const touch = e.touches?.[0];
-      if (!touch) {
-        clearTimer();
-        return;
-      }
-      const dx = touch.clientX - longPressPos.clientX;
-      const dy = touch.clientY - longPressPos.clientY;
-      if (Math.sqrt(dx * dx + dy * dy) > 10) clearTimer();
-    };
-    container.addEventListener("touchstart", (e) => {
-      startTimer(e);
-    });
-    container.addEventListener("touchend", clearTimer);
-    container.addEventListener("touchcancel", clearTimer);
-    container.addEventListener("touchmove", moveCancel);
-  }
+function applySavedTogglePreferences() {
+  const prefs = readPreferences();
+  const toggles = prefs?.toggles;
+  if (!toggles || typeof toggles !== "object") return;
+  if (typeof toggles.showKmMarkers === "boolean") config.showKmMarkers = toggles.showKmMarkers;
+  if (typeof toggles.showWaypoints === "boolean") config.showWaypoints = toggles.showWaypoints;
+  if (typeof toggles.showViewerLocation === "boolean") config.showViewerLocation = toggles.showViewerLocation;
+}
 
-  function focusDevice(deviceId) {
-    const marker = markers.get(deviceId);
-    if (!marker) return;
-    autoFit = false;
-    map.setView(marker.getLatLng(), Math.max(map.getZoom(), 15));
-    marker.openPopup();
-  }
+function getSelectedDeviceId() {
+  return selectedDeviceId;
+}
 
-  function focusViewer() {
-    if (!viewerMarker) return;
-    autoFit = false;
-    map.setView(viewerMarker.getLatLng(), Math.max(map.getZoom(), 15));
-    viewerMarker.openPopup();
-  }
+function filterDevice(id) {
+  if (config?.debug) return true;
+  if (!config?.deviceIds || !Array.isArray(config.deviceIds)) return true;
+  return config.deviceIds.includes(id);
+}
 
-  function stopViewerLocation() {
-    if (viewerWatchId != null && navigator.geolocation?.clearWatch) {
-      navigator.geolocation.clearWatch(viewerWatchId);
-    }
-    viewerWatchId = null;
-    if (viewerMarker) {
-      viewerMarker.remove();
-      viewerMarker = null;
-    }
-  }
+function isStale(deviceId) {
+  const minutes = Number(config?.staleMinutes ?? DEFAULT_CONFIG.staleMinutes);
+  if (!minutes || minutes <= 0) return false;
+  const ts = lastSeen.get(deviceId);
+  if (!ts) return false;
+  const ageMs = Date.now() - new Date(ts).getTime();
+  return Number.isFinite(ageMs) && ageMs > minutes * 60 * 1000;
+}
 
-  function ensureEtaControl() {
-    if (!map) return null;
-    if (!etaControl) {
-      etaControl = L.control({ position: "topright" });
-      etaControl.onAdd = () => {
-        etaContainer = L.DomUtil.create("div", "eta-control");
-        L.DomEvent.disableClickPropagation(etaContainer);
-        L.DomEvent.disableScrollPropagation(etaContainer);
-        return etaContainer;
-      };
-      etaControl.addTo(map);
-    }
-    return etaContainer;
-  }
+function getDeviceProgress(deviceId) {
+  return computeDeviceProgress(deviceId, { lastPositions, lastProjection, positionsHistory });
+}
 
-  function getDeviceProgress(deviceId) {
-    const pos = lastPositions.get(deviceId);
-    if (!pos) return null;
-    const last = lastProjection.get(deviceId);
-    const hint = last?.distanceAlong;
-    const heading = getRecentHeading(deviceId);
-    const proj = projectOnRouteWithHint({ lat: pos.latitude, lng: pos.longitude }, hint, heading);
-    if (!proj) return null;
-    const offtrack = Boolean(proj.offtrack);
-    const speedMs = getAverageSpeedMs(deviceId);
-    // store last projection for continuity
-    lastProjection.set(deviceId, { distanceAlong: proj.distanceAlong, t: Date.now() });
-    return { proj, speedMs, pos, offtrack };
-  }
+function getAverageSpeedForDevice(deviceId) {
+  return getAverageSpeedMs(positionsHistory, deviceId, activeStartTimes);
+}
 
-  function computeEta(deviceId, targetDistance) {
-    const progress = getDeviceProgress(deviceId);
-    if (!progress || progress.offtrack) return { status: "offtrack" };
-    const delta = targetDistance - progress.proj.distanceAlong;
-    if (delta <= 0) return { status: "passed" };
-    if (!progress.speedMs || progress.speedMs <= 0) return { status: "unknown" };
-    const arrival = new Date(Date.now() + (delta / progress.speedMs) * 1000);
-    return { status: "eta", arrival };
-  }
+function computeEtaForDevice(deviceId, targetDistance) {
+  return computeEta(deviceId, targetDistance, {
+    lastPositions,
+    lastProjection,
+    positionsHistory,
+    activeStartTimes,
+  });
+}
 
-  function isStale(deviceId) {
-    const minutes = Number(config?.staleMinutes ?? defaults.staleMinutes);
-    if (!minutes || minutes <= 0) return false;
-    const ts = lastSeen.get(deviceId);
-    if (!ts) return false;
-    const ageMs = Date.now() - new Date(ts).getTime();
-    return Number.isFinite(ageMs) && ageMs > minutes * 60 * 1000;
-  }
-
-  function formatTimeLabel(timeStr) {
-    if (!timeStr) return "";
-    const d = new Date(timeStr);
-    if (Number.isNaN(d.getTime())) return "";
-    const today = new Date();
-    const sameDay =
-      d.getFullYear() === today.getFullYear() &&
-      d.getMonth() === today.getMonth() &&
-      d.getDate() === today.getDate();
-    if (sameDay) {
-      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    }
-    return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${d.toLocaleTimeString(
-      [],
-      { hour: "2-digit", minute: "2-digit" }
-    )}`;
-  }
-
-  function formatDateTimeFull(timeStr) {
-    if (!timeStr) return "";
-    const d = timeStr instanceof Date ? timeStr : new Date(timeStr);
-    if (Number.isNaN(d.getTime())) return "";
-    return d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
-  }
-
-  function getAverageSpeedMs(deviceId) {
-    const hist = positionsHistory.get(deviceId) || [];
-    const activeSince = activeStartTimes.get(deviceId) || null;
-    const cutoff = Date.now() - HISTORY_WINDOW_MS;
-    const filtered = hist.filter((p) => p.t >= cutoff && (!activeSince || p.t >= activeSince));
-    const samples =
-      filtered.length >= 2 ? filtered : filtered.length ? filtered : hist.length ? hist : null;
-    if (!samples || samples.length < 2) {
-      return 0;
-    }
-    let dist = 0;
-    let startT = samples[0].t;
-    let endT = samples[samples.length - 1].t;
-    for (let i = 1; i < samples.length; i += 1) {
-      dist += distanceMeters([samples[i - 1].lat, samples[i - 1].lng], [samples[i].lat, samples[i].lng]);
-    }
-    const span = (endT || 0) - (startT || 0);
-    if (span <= 0) {
-      return 0;
-    }
-    return dist / (span / 1000);
-  }
-
-  function getRecentHeading(deviceId, points = 5) {
-    const hist = positionsHistory.get(deviceId) || [];
-    if (!hist.length) return null;
-    // use last N points to compute heading (bearing) in degrees (0-360)
-    const n = Math.min(points, hist.length);
-    const a = hist[hist.length - n];
-    const b = hist[hist.length - 1];
-    if (!a || !b || a.lat == null || a.lng == null || b.lat == null || b.lng == null) return null;
-    const y = Math.sin(toRad(b.lng - a.lng)) * Math.cos(toRad(b.lat));
-    const x = Math.cos(toRad(a.lat)) * Math.sin(toRad(b.lat)) - Math.sin(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.cos(toRad(b.lng - a.lng));
-    let brng = (Math.atan2(y, x) * 180) / Math.PI;
-    brng = (brng + 360) % 360;
-    return brng;
-  }
-
-  function renderLegend() {
-    // expose debug info function
-    window.__getDebugInfo = function() {
-      const devicesInfo = Array.from(devices.keys()).map((id) => {
-        const pos = lastPositions.get(id) || null;
-        const proj = lastProjection.get(id) || null;
-        const hist = positionsHistory.get(id) || [];
-        const heading = getRecentHeading(id);
-        const speedMs = getAverageSpeedMs(id);
-        return { id, pos, proj, heading, speedMs, historySamples: hist.length };
-      });
-      return { ts: new Date().toISOString(), devices: devicesInfo, routePoints: routePoints.length };
-    };
-
-    const container = ensureLegend();
-    if (!container) return;
-    container.innerHTML = "";
-    // debug button
-    const dbgWrap = document.createElement('div');
-    dbgWrap.className = 'legend-item';
-    const dbgBtn = document.createElement('button');
-    dbgBtn.className = 'legend-btn';
-    dbgBtn.textContent = 'Debug';
-    dbgBtn.addEventListener('click', () => window.open('/debug.html', '_blank'));
-    dbgWrap.appendChild(dbgBtn);
-    container.appendChild(dbgWrap);
-    const deviceEntries = Array.from(devices.values()).filter((d) => filterDevice(d.id));
-    deviceEntries.forEach((device) => {
-      const item = document.createElement("div");
-      item.className = "legend-item";
-      const btn = document.createElement("button");
-      btn.className = "legend-btn";
-      btn.dataset.deviceId = String(device.id);
-      if (device.id === selectedDeviceId) btn.classList.add("selected");
-      const dot = document.createElement("span");
-      dot.className = `legend-dot ${isStale(device.id) ? "stale" : "live"}`;
-      const label = document.createElement("span");
-      const name = device.name || `Device ${device.id}`;
-      const ts = formatTimeLabel(lastSeen.get(device.id));
-    const prog = getDeviceProgress(device.id);
-    const offRoute = !prog || prog.offtrack;
-    const km = !offRoute && prog
-      ? `${Math.round((prog.proj.distanceAlong / 1000) * 10) / 10} km`
-      : null;
-    const suffix = offRoute ? ` • ${t("offrouteLabel")}` : km ? ` • ${km}` : "";
-    label.textContent = ts ? `${name} (${ts})${suffix}` : `${name}${suffix}`;
-      btn.append(dot, label);
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        selectDevice(device.id, { focus: true });
-        focusDevice(device.id);
-      });
-      item.appendChild(btn);
-      container.appendChild(item);
-    });
-    if (config?.showViewerLocation) {
-      const item = document.createElement("div");
-      item.className = "legend-item";
-      const btn = document.createElement("button");
-      btn.className = "legend-btn";
-      btn.dataset.target = "you";
-      const dot = document.createElement("span");
-      dot.className = "legend-dot you";
-      const label = document.createElement("span");
-      label.textContent = t("you");
-      btn.append(dot, label);
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        focusViewer();
-      });
-      item.appendChild(btn);
-      container.appendChild(item);
-    }
-  }
-
-  function renderToggles() {
-    if (!map) return;
-    if (!markerToggleControl) {
-      markerToggleControl = L.control({ position: "topright" });
-      markerToggleControl.onAdd = () => {
-        toggleContainer = L.DomUtil.create("div", "toggle-control");
-        L.DomEvent.disableClickPropagation(toggleContainer);
-        L.DomEvent.disableScrollPropagation(toggleContainer);
-        return toggleContainer;
-      };
-      markerToggleControl.addTo(map);
-    }
-    toggleContainer.innerHTML = "";
-    const kmRow = document.createElement("label");
-    kmRow.className = "toggle-row";
-    const kmCb = document.createElement("input");
-    kmCb.type = "checkbox";
-    kmCb.checked = Boolean(config?.showKmMarkers);
-    kmCb.addEventListener("change", () => {
-      config.showKmMarkers = kmCb.checked;
-      rebuildKmMarkers();
-      persistToggles();
-    });
-    kmRow.append(kmCb, document.createTextNode(` ${t("toggleKm")}`));
-    toggleContainer.appendChild(kmRow);
-
-    const wpRow = document.createElement("label");
-    wpRow.className = "toggle-row";
-    const wpCb = document.createElement("input");
-    wpCb.type = "checkbox";
-    wpCb.checked = Boolean(config?.showWaypoints);
-    wpCb.addEventListener("change", () => {
-      config.showWaypoints = wpCb.checked;
-      renderWaypoints();
-      persistToggles();
-    });
-    wpRow.append(wpCb, document.createTextNode(` ${t("toggleWp")}`));
-    toggleContainer.appendChild(wpRow);
-
-    const youRow = document.createElement("label");
-    youRow.className = "toggle-row";
-    const youCb = document.createElement("input");
-    youCb.type = "checkbox";
-    youCb.checked = Boolean(config?.showViewerLocation);
-    youCb.addEventListener("change", () => {
-      config.showViewerLocation = youCb.checked;
-      if (youCb.checked) startViewerLocation();
-      else stopViewerLocation();
-      renderLegend();
-      persistToggles();
-    });
-    youRow.append(youCb, document.createTextNode(` ${t("toggleYou")}`));
-    toggleContainer.appendChild(youRow);
-  }
-
-  function selectDevice(deviceId, { focus = false } = {}) {
-    selectedDeviceId = deviceId;
-    renderLegend();
+async function loadConfig() {
+  try {
+    const res = await fetch("config.json", { cache: "no-store" });
+    if (!res.ok) throw new Error("config.json missing");
+    const cfg = await res.json();
+    Object.assign(config, DEFAULT_CONFIG, cfg);
+    applySavedTogglePreferences();
+    texts = { ...DEFAULT_TEXTS };
+    setStatus("");
+    const pageTitle = config.title || DEFAULT_CONFIG.title;
+    if (titleEl) titleEl.textContent = pageTitle;
+    document.title = pageTitle;
+    rebuildKmMarkers();
     renderWaypoints();
     renderToggles();
-    if (focus) focusDevice(deviceId);
+    persistToggles();
+  } catch (err) {
+    setStatus("");
   }
+}
 
-  async function startPolling() {
-    if ((!config?.token || !config?.traccarUrl) && !config?.debug) return;
-    await refreshDevices().catch((err) => {
-      console.error(err);
-      setStatus("");
-    });
-    await preloadHistory().catch((err) => {
-      console.error(err);
-      setStatus("");
-    });
-    await refreshPositions().catch((err) => {
-      console.error(err);
-      setStatus("");
-    });
+async function loadTranslations(preferredLang) {
+  const prefs = readPreferences();
+  const savedLang = preferredLang || prefs.lang;
+  const browserLang = (navigator.language || "en").slice(0, 2).toLowerCase();
+  const targetLang =
+    savedLang ||
+    Object.keys(TRANSLATIONS_MAP).find((code) => code === browserLang) ||
+    null;
+  let path;
+  if (targetLang && TRANSLATIONS_MAP[targetLang]) {
+    path = TRANSLATIONS_MAP[targetLang];
+    currentLanguage = targetLang;
+  } else if (config?.translationFile) {
+    path = config.translationFile;
+    currentLanguage = targetLang || "en";
+  } else {
+    path = TRANSLATIONS_MAP.en || "translations/en.json";
+    currentLanguage = "en";
+  }
+  persistPreferences({
+    lang: currentLanguage,
+    toggles: prefs.toggles,
+  });
+  try {
+    const res = await fetch(path, { cache: "no-store" });
+    if (!res.ok) throw new Error("no translation file");
+    const data = await res.json();
+    texts = { ...DEFAULT_TEXTS, ...data };
+  } catch (err) {
+    texts = { ...DEFAULT_TEXTS };
+  }
+  updateLangSelector();
+  updateHelpContent();
+  updateDownloadButtonLabel();
+  renderLegend();
+  renderWaypoints();
+  renderToggles();
+}
+
+function initLangSelector() {
+  langSelector = document.getElementById("lang-select");
+  if (!langSelector) return;
+  langSelector.addEventListener("change", async (e) => {
+    const code = e.target.value;
+    persistPreferences({ lang: code });
+    await loadTranslations(code);
     renderToggles();
-    if (refreshTimer) clearInterval(refreshTimer);
-    refreshTimer = setInterval(() => {
-      refreshPositions().catch((err) => {
-        console.error(err);
-        setStatus("");
-      });
-    }, (config.refreshSeconds || defaults.refreshSeconds) * 1000);
-  }
+  });
+  updateLangSelector();
+}
 
-  async function bootstrap() {
-    initMap();
-    initContextMenu();
-    await loadConfig();
-    initLangSelector();
-    initDownloadButton();
-    await loadTranslations();
-    await loadRoute();
-    await startPolling();
-    startViewerLocation();
-  }
+function updateLangSelector() {
+  if (!langSelector) return;
+  const fallback = "en";
+  const desired = currentLanguage || fallback;
+  const values = Array.from(langSelector.options).map((opt) => opt.value);
+  langSelector.value = values.includes(desired) ? desired : fallback;
+}
 
-  bootstrap();
-})();
+function initDownloadButton() {
+  downloadButton = document.getElementById("download-gpx");
+  if (!downloadButton) return;
+  downloadButton.addEventListener("click", () => {
+    const trackFile = config?.trackFile || "tracks/track.gpx";
+    const link = document.createElement("a");
+    link.href = trackFile;
+    link.download = trackFile.split("/").pop() || "track.gpx";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  });
+  updateDownloadButtonLabel();
+}
+
+function updateDownloadButtonLabel() {
+  if (!downloadButton) return;
+  downloadButton.textContent = t("downloadGpx");
+}
+
+async function loadRoute() {
+  const trackFile = config?.trackFile || "tracks/track.gpx";
+  try {
+    const res = await fetch(trackFile, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Track ${trackFile} missing`);
+    const text = await res.text();
+    const { segments, waypoints } = parseGpx(text);
+    if (!segments.length) throw new Error(`Track ${trackFile} has no segments`);
+    clearRoute();
+    buildRouteProfile(segments);
+    renderRoute(segments, "#0c8bc7");
+    const mappedWps = mapWaypoints(waypoints || []);
+    setRouteWaypoints(mappedWps);
+    renderWaypoints();
+    rebuildKmMarkers();
+    segments.forEach((seg) => seg.forEach((pt) => extendBounds(pt)));
+    fitToData();
+  } catch (err) {
+    console.error(err);
+    setStatus(`Track error: ${trackFile}`, true);
+  }
+}
+
+function selectDevice(deviceId, { focus = false } = {}) {
+  selectedDeviceId = deviceId;
+  renderLegend();
+  renderWaypoints();
+  renderToggles();
+  if (focus) {
+    // focus handled within visualization renderLegend
+  }
+}
+
+async function refreshDevices() {
+  let list = [];
+  if (config?.traccarUrl && config?.token) {
+    list = await fetchDevices(config);
+  }
+  if (config?.debug) {
+    list.push(
+      { id: 10001, name: "Debug Rider 1" },
+      { id: 10002, name: "Debug Rider 2" },
+      { id: 10003, name: "Debug Offroute" }
+    );
+  }
+  devices.clear();
+  list.forEach((d) => devices.set(d.id, d));
+  renderLegend();
+  if (!selectedDeviceId && list.length) {
+    selectDevice(list[0].id);
+  }
+}
+
+async function fetchRecentHistoryForDevice(deviceId) {
+  if (!config?.traccarUrl || !config?.token) return;
+  if (!filterDevice(deviceId)) return;
+  const now = new Date();
+  const from = new Date(now.getTime() - HISTORY_WINDOW_MS);
+  const data = await fetchRecentHistory(config, deviceId, from, now);
+  const startMs = config?.startTime ? Date.parse(config.startTime) : null;
+  const samples = data
+    .map((p) => {
+      const time = p.deviceTime || p.fixTime || p.serverTime;
+      const tVal = time ? Date.parse(time) : NaN;
+      return { t: tVal, lat: p.latitude, lng: p.longitude };
+    })
+    .filter((p) => Number.isFinite(p.t) && (!startMs || p.t >= startMs))
+    .sort((a, b) => a.t - b.t);
+  positionsHistory.set(deviceId, samples);
+}
+
+async function preloadHistory() {
+  if (config?.debug) return;
+  if (!config?.traccarUrl || !config?.token) return;
+  const ids = Array.from(devices.keys()).filter((id) => filterDevice(id));
+  await Promise.all(ids.map((id) => fetchRecentHistoryForDevice(id).catch((err) => console.error(err))));
+}
+
+function updatePositionHistory(deviceId, coords, timeMs) {
+  if (!timeMs) return;
+  const startMs = config?.startTime ? Date.parse(config.startTime) : null;
+  if (startMs && timeMs < startMs) return;
+  const list = positionsHistory.get(deviceId) || [];
+  list.push({ t: timeMs, lat: coords[0], lng: coords[1] });
+  const cutoff = Date.now() - HISTORY_WINDOW_MS;
+  while (list.length && list[0].t < cutoff) list.shift();
+  positionsHistory.set(deviceId, list);
+}
+
+function handlePosition(position) {
+  if (!filterDevice(position.deviceId)) return;
+  const time = position.deviceTime || position.fixTime || position.serverTime;
+  const timeMs = time ? Date.parse(time) : null;
+  const coords = [position.latitude, position.longitude];
+  if (time) lastSeen.set(position.deviceId, time);
+  lastPositions.set(position.deviceId, position);
+  if (timeMs) updatePositionHistory(position.deviceId, coords, timeMs);
+  const prog = getDeviceProgress(position.deviceId);
+  markActiveOnRoute(position.deviceId, prog, activeStartTimes, timeMs || Date.now());
+  updateMarker(position);
+}
+
+async function refreshPositions() {
+  let positions = [];
+  if (config?.traccarUrl && config?.token) {
+    positions = await fetchPositions(config);
+  }
+  if (config?.debug) {
+    const debugPos = buildDebugPositions(debugState, config, getRouteTotal(), getRoutePoints());
+    positions.push(...debugPos);
+  }
+  positions.forEach(handlePosition);
+  renderLegend();
+  renderWaypoints();
+  fitToData();
+}
+
+async function startPolling() {
+  if ((!config?.token || !config?.traccarUrl) && !config?.debug) return;
+  await refreshDevices().catch((err) => {
+    console.error(err);
+    setStatus("");
+  });
+  await preloadHistory().catch((err) => {
+    console.error(err);
+    setStatus("");
+  });
+  await refreshPositions().catch((err) => {
+    console.error(err);
+    setStatus("");
+  });
+  renderToggles();
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => {
+    refreshPositions().catch((err) => {
+      console.error(err);
+      setStatus("");
+    });
+  }, (config.refreshSeconds || DEFAULT_CONFIG.refreshSeconds) * 1000);
+}
+
+function setupUiBindings() {
+  setupVisualization({
+    config,
+    t,
+    computeEta: computeEtaForDevice,
+    getDeviceProgress,
+    getAverageSpeedMs: getAverageSpeedForDevice,
+    isStale,
+    formatDateTimeFull,
+    formatTimeLabel,
+    selectDevice,
+    getSelectedDeviceId,
+    filterDevice,
+    projectOnRoute,
+    startViewerLocation: () => vizStartViewerLocation(),
+    stopViewerLocation: () => vizStopViewerLocation(),
+    persistToggles,
+    devices,
+    lastSeen,
+    lastPositions,
+  });
+}
+
+async function bootstrap() {
+  setupUiBindings();
+  initMap();
+  initContextMenu();
+  await loadConfig();
+  initLangSelector();
+  initDownloadButton();
+  await loadTranslations();
+  await loadRoute();
+  await startPolling();
+  vizStartViewerLocation();
+  installDebugInfoHook({
+    devices,
+    lastPositions,
+    lastProjection,
+    positionsHistory,
+    activeStartTimes,
+  });
+}
+
+bootstrap();

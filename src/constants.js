@@ -1,0 +1,43 @@
+export const DEFAULT_CONFIG = {
+  title: "Live Tracker",
+  refreshSeconds: 10,
+  deviceIds: null,
+  kmMarkerInterval: 1,
+  showViewerLocation: false,
+  staleMinutes: 15,
+  startTime: null,
+  showKmMarkers: true,
+  showWaypoints: true,
+  debug: false,
+};
+
+export const DEFAULT_TEXTS = {
+  eta: "ETA",
+  etaHere: "ETA here: {eta}",
+  passed: "passed",
+  offtrack: "participant not on track",
+  unknown: "unknown",
+  next: "Next",
+  offrouteLabel: "off-route",
+  helpTip:
+    "Select a participant to see live ETAs to waypoints. Right-click or long-press the map for Google Maps/Waze/coords and ETA to that point.",
+  helpTitle: "Live Tracker Tips",
+  toggleKm: "Show km markers",
+  toggleWp: "Show waypoints",
+  copyCoords: "Copy coordinates",
+  openGoogle: "Open in Google Maps",
+  openWaze: "Open in Waze",
+  you: "You",
+  toggleYou: "Show your location",
+  downloadGpx: "Download GPX",
+};
+
+export const TRANSLATIONS_MAP = {
+  en: "translations/en.json",
+  nl: "translations/nl.json",
+  sv: "translations/sv.json",
+};
+
+export const LANGUAGE_COOKIE = "tracker_lang";
+export const HISTORY_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+export const ACTIVE_DISTANCE_THRESHOLD = 50; // meters from start
