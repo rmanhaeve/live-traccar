@@ -4,6 +4,7 @@ import {
   TRANSLATIONS_MAP,
   LANGUAGE_COOKIE,
   KM_MARKER_BASE_KM,
+  ACTIVE_DISTANCE_THRESHOLD,
 } from "./src/constants.js";
 import {
   parseGpx,
@@ -208,10 +209,9 @@ function persistToggles() {
 
 function rebuildDistanceTicks() {
   const total = getRouteTotal() || 0;
-  const baseKm = KM_MARKER_BASE_KM;
   distanceTicks = [];
-  if (!total || !baseKm || baseKm <= 0) return;
-  const step = baseKm * 1000;
+  if (!total) return;
+  const step = 1000; // always track history ticks every 1 km
   for (let d = step; d <= total + 1e-6; d += step) {
     distanceTicks.push(d);
   }
@@ -707,6 +707,25 @@ function ensureProgressEvents(deviceId) {
   return entry;
 }
 
+function updateWaypointEvent(entry, wp, prevDist, currDist, prevTime, currTime) {
+  const pad = ACTIVE_DISTANCE_THRESHOLD;
+  const low = (wp.distanceAlong || 0) - pad;
+  const high = (wp.distanceAlong || 0) + pad;
+  const prevIn = Number.isFinite(prevDist) && prevDist >= low && prevDist <= high;
+  const currIn = Number.isFinite(currDist) && currDist >= low && currDist <= high;
+  const crossed =
+    Number.isFinite(prevDist) &&
+    Number.isFinite(currDist) &&
+    prevDist < low &&
+    currDist > high;
+  if (!entry.enterMs && (currIn || crossed)) {
+    entry.enterMs = prevTime ?? currTime ?? Date.now();
+  }
+  if (entry.enterMs && !entry.leaveMs && ((prevIn && !currIn && Number.isFinite(currDist) && currDist > high) || crossed)) {
+    entry.leaveMs = currTime ?? prevTime ?? entry.enterMs;
+  }
+}
+
 function backfillProgressFromHistory(deviceId) {
   const events = ensureProgressEvents(deviceId);
   if (events.backfilled) return;
@@ -723,6 +742,8 @@ function backfillProgressFromHistory(deviceId) {
     const proj = projectOnRouteWithHint({ lat: sample.lat, lng: sample.lng }, hint);
     if (!proj || proj.distanceAlong == null) return;
     const dist = proj.distanceAlong;
+    const prevDist = lastDist;
+    const prevTime = lastTime;
     if (firstDist == null) {
       firstDist = dist;
       firstTime = sample.t;
@@ -737,11 +758,14 @@ function backfillProgressFromHistory(deviceId) {
       });
       routeWaypoints.forEach((wp, idx) => {
         const key = `${idx}:${Math.round(wp.distanceAlong)}`;
-        if (events.waypoints.has(key)) return;
-        const crossed = dist >= wp.distanceAlong && lastDist < wp.distanceAlong;
-        if (crossed) {
-          events.waypoints.set(key, { name: wp.name, distanceAlong: wp.distanceAlong, timeMs: sample.t });
-        }
+        const entry = events.waypoints.get(key) || {
+          name: wp.name,
+          distanceAlong: wp.distanceAlong,
+          enterMs: null,
+          leaveMs: null,
+        };
+        updateWaypointEvent(entry, wp, prevDist, dist, prevTime, sample.t);
+        if (entry.enterMs || entry.leaveMs) events.waypoints.set(key, entry);
       });
     }
     lastDist = dist;
@@ -758,9 +782,16 @@ function backfillProgressFromHistory(deviceId) {
     routeWaypoints.forEach((wp, idx) => {
       const key = `${idx}:${Math.round(wp.distanceAlong)}`;
       if (events.waypoints.has(key)) return;
+      const pad = ACTIVE_DISTANCE_THRESHOLD;
+      const high = (wp.distanceAlong || 0) + pad;
       if (maxDist >= wp.distanceAlong) {
         const t = firstDist != null && wp.distanceAlong <= firstDist ? firstTime : lastTime;
-        events.waypoints.set(key, { name: wp.name, distanceAlong: wp.distanceAlong, timeMs: t });
+        events.waypoints.set(key, {
+          name: wp.name,
+          distanceAlong: wp.distanceAlong,
+          enterMs: t,
+          leaveMs: maxDist > high ? lastTime : null,
+        });
       }
     });
   }
@@ -772,6 +803,7 @@ function recordProgressEvents(deviceId, prevProj, currProj, timeMs) {
   if (!currProj || currProj.distanceAlong == null || !timeMs) return;
   const prev = prevProj?.distanceAlong ?? null;
   const curr = currProj.distanceAlong;
+  const prevTime = prevProj?.t ?? timeMs;
   const events = ensureProgressEvents(deviceId);
   distanceTicks.forEach((tick) => {
     if (events.km.has(tick)) return;
@@ -780,11 +812,14 @@ function recordProgressEvents(deviceId, prevProj, currProj, timeMs) {
   });
   routeWaypoints.forEach((wp, idx) => {
     const key = `${idx}:${Math.round(wp.distanceAlong)}`;
-    if (events.waypoints.has(key)) return;
-    const crossed = prev == null ? curr >= wp.distanceAlong : curr >= wp.distanceAlong && prev < wp.distanceAlong;
-    if (crossed) {
-      events.waypoints.set(key, { name: wp.name, distanceAlong: wp.distanceAlong, timeMs });
-    }
+    const entry = events.waypoints.get(key) || {
+      name: wp.name,
+      distanceAlong: wp.distanceAlong,
+      enterMs: null,
+      leaveMs: null,
+    };
+    updateWaypointEvent(entry, wp, prev, curr, prevTime, timeMs);
+    if (entry.enterMs || entry.leaveMs) events.waypoints.set(key, entry);
   });
 }
 
@@ -814,7 +849,7 @@ function handlePosition(position) {
   }
   if (timeMs) updatePositionHistory(position.deviceId, coords, timeMs);
   const prog = getDeviceProgress(position.deviceId);
-  markActiveOnRoute(position.deviceId, prog, activeStartTimes, timeMs || Date.now());
+  markActiveOnRoute(position.deviceId, prog, activeStartTimes, timeMs || Date.now(), positionsHistory);
   if (timeMs) recordProgressEvents(position.deviceId, prevProj, prog?.proj, timeMs);
   updateMarker(position);
 }
@@ -870,6 +905,7 @@ function setupUiBindings() {
     t,
     computeEta: computeEtaForDevice,
     getDeviceProgress,
+    getActiveStartTime: (id) => activeStartTimes.get(id) || null,
     getAverageSpeedMs: getAverageSpeedForDevice,
     getProgressHistory,
     isStale,

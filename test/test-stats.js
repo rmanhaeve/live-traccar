@@ -58,8 +58,8 @@ assert.equal(progress.endpoint, "finish");
 // markActiveOnRoute should set active start when device is sufficiently along the route
 const now = 50000;
 activeStartTimes.delete(deviceId);
-markActiveOnRoute(deviceId, progress, activeStartTimes, now);
-assert.equal(activeStartTimes.get(deviceId), now);
+markActiveOnRoute(deviceId, progress, activeStartTimes, now, positionsHistory);
+assert.equal(activeStartTimes.get(deviceId), positionsHistory.get(deviceId)[1].t);
 
 // computeEta should cover offtrack, passed, unknown and eta statuses
 const etaOfftrack = computeEta(99, 10, { lastPositions: new Map(), lastProjection: new Map(), positionsHistory, activeStartTimes });

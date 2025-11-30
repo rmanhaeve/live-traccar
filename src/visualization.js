@@ -1,5 +1,5 @@
 import { getRouteDistances, getRoutePoints } from "./route.js";
-import { KM_MARKER_BASE_KM } from "./constants.js";
+import { ACTIVE_DISTANCE_THRESHOLD, KM_MARKER_BASE_KM } from "./constants.js";
 import { computeElevationTotals } from "./stats.js";
 
 const colors = [
@@ -40,6 +40,7 @@ const state = {
   devices: null,
   lastSeen: null,
   lastPositions: null,
+  getActiveStartTime: null,
   historyOverlay: null,
   routeWaypoints: [],
   trackData: [],
@@ -413,6 +414,7 @@ export function setupVisualization(deps) {
   state.devices = deps.devices;
   state.lastSeen = deps.lastSeen;
   state.lastPositions = deps.lastPositions;
+  state.getActiveStartTime = deps.getActiveStartTime || null;
 }
 
 function formatEtaIntervalText(eta) {
@@ -434,6 +436,18 @@ function formatEtaIntervalText(eta) {
   const minutes = Math.round(spreadMs / 60000);
   if (minutes <= 0) return state.t("etaMarginSubMinute");
   return state.t("etaMargin", { minutes });
+}
+
+function formatEtaTimeOnly(eta, timeFormatter) {
+  if (eta?.status === "eta" && eta.arrival) {
+    const ts = eta.arrival instanceof Date ? eta.arrival.getTime() : eta.arrival;
+    const base = timeFormatter(ts);
+    const intervalText = formatEtaIntervalText(eta);
+    return intervalText ? `${base} (${intervalText})` : base;
+  }
+  if (eta?.status === "passed") return state.t("passed");
+  if (eta?.status === "offtrack") return state.t("offtrack");
+  return state.t("unknown");
 }
 
 function formatEtaText(eta) {
@@ -477,7 +491,13 @@ function showHistoryOverlay(deviceId) {
   panel.appendChild(header);
   const sections = document.createElement("div");
   sections.className = "history-sections";
-  const addSection = (label, items, formatter) => {
+  const formatTimeOnly = (ms) => {
+    if (ms == null) return "—";
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
+  const addSection = (label, items, columns, formatter) => {
     const block = document.createElement("div");
     block.className = "history-section";
     const headerRow = document.createElement("button");
@@ -498,12 +518,49 @@ function showHistoryOverlay(deviceId) {
       empty.textContent = state.t("historyNone");
       content.appendChild(empty);
     } else {
-      items.forEach((it) => {
-        const row = document.createElement("div");
-        row.className = "history-row";
-        row.textContent = formatter(it);
-        content.appendChild(row);
+      const table = document.createElement("table");
+      table.className = "history-table";
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      columns.forEach((col) => {
+        const th = document.createElement("th");
+        th.textContent = col;
+        headRow.appendChild(th);
       });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      const sorted = [...items].sort((a, b) => {
+        const ta = a.timeMs ?? a.enterMs ?? a.leaveMs ?? a.time ?? 0;
+        const tb = b.timeMs ?? b.enterMs ?? b.leaveMs ?? b.time ?? 0;
+        return ta - tb;
+      });
+      let lastDay = null;
+      sorted.forEach((it) => {
+        const t = it.timeMs ?? it.enterMs ?? it.leaveMs ?? it.time;
+        const d = t != null ? new Date(t) : null;
+        const dayKey = d && !Number.isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : null;
+        if (dayKey && dayKey !== lastDay && dayKey !== new Date().toISOString().slice(0, 10)) {
+          const dateRow = document.createElement("tr");
+          dateRow.className = "history-date";
+          const td = document.createElement("td");
+          td.colSpan = columns.length;
+          td.textContent = d.toLocaleDateString([], { dateStyle: "medium" });
+          dateRow.appendChild(td);
+          tbody.appendChild(dateRow);
+          lastDay = dayKey;
+        }
+        const row = document.createElement("tr");
+        const cells = formatter(it, formatTimeOnly);
+        cells.forEach((val) => {
+          const td = document.createElement("td");
+          td.textContent = val;
+          row.appendChild(td);
+        });
+        tbody.appendChild(row);
+      });
+      table.appendChild(tbody);
+      content.appendChild(table);
     }
     block.appendChild(content);
     const setCollapsed = (collapsed) => {
@@ -517,17 +574,78 @@ function showHistoryOverlay(deviceId) {
     setCollapsed(initialCollapsed);
     sections.appendChild(block);
   };
+  const kmWithSpeed = [];
+  const startTime = state.getActiveStartTime ? state.getActiveStartTime(deviceId) : null;
+  const startDist = ACTIVE_DISTANCE_THRESHOLD;
+  const kmDistances = (hist?.distances || []).slice().sort((a, b) => a.distanceAlong - b.distanceAlong);
+  let prevKm = null;
+  kmDistances.forEach((item) => {
+    let speed = null;
+    if (prevKm && Number.isFinite(prevKm.timeMs) && Number.isFinite(item.timeMs)) {
+      const deltaDist = (item.distanceAlong || 0) - (prevKm.distanceAlong || 0);
+      const deltaTime = item.timeMs - prevKm.timeMs;
+      if (deltaDist > 0 && deltaTime > 0) {
+        speed = (deltaDist / (deltaTime / 1000)) * 3.6;
+      }
+    } else if (!prevKm && Number.isFinite(startTime) && Number.isFinite(item.timeMs)) {
+      const deltaDist = Math.max((item.distanceAlong || 0) - startDist, 0);
+      const deltaTime = item.timeMs - startTime;
+      if (deltaDist > 0 && deltaTime > 0) {
+        speed = (deltaDist / (deltaTime / 1000)) * 3.6;
+      }
+    }
+    kmWithSpeed.push({ ...item, speedKph: speed });
+    prevKm = item;
+  });
   addSection(
     state.t("historyKm"),
-    hist?.distances || [],
-    (item) => `${Math.round((item.distanceAlong / 1000) * 10) / 10} km • ${state.formatDateTimeFull(item.timeMs)}`
+    kmWithSpeed,
+    [state.t("historyKmDistance"), state.t("historyTime"), state.t("historyAvgSpeed")],
+    (item, formatTime) => {
+      const km = `${Math.round((item.distanceAlong / 1000) * 10) / 10} km`;
+      const speed = Number.isFinite(item.speedKph) ? `${Math.round(item.speedKph * 10) / 10} km/h` : "—";
+      return [km, formatTime(item.timeMs), speed];
+    }
   );
   addSection(
     state.t("historyWp"),
     hist?.waypoints || [],
-    (item) =>
-      `${item.name || state.t("historyWp")} (${Math.round((item.distanceAlong / 1000) * 10) / 10} km) • ${state.formatDateTimeFull(item.timeMs)}`
+    [state.t("historyWpName"), state.t("historyWpEnter"), state.t("historyWpLeave")],
+    (item, formatTime) => {
+      const name = item.name || state.t("historyWp");
+      const km = `${Math.round((item.distanceAlong / 1000) * 10) / 10} km`;
+      const enter = formatTime(item.enterMs);
+      const leave = formatTime(item.leaveMs);
+      return [`${name} (${km})`, enter, leave];
+    }
   );
+  const progress = state.getDeviceProgress(deviceId);
+  const currentDist = progress?.proj?.distanceAlong ?? 0;
+  const completedKeys = new Set((hist?.waypoints || []).map((w) => Math.round(w.distanceAlong || 0)));
+  const upcoming = (state.routeWaypoints || []).filter((wp, idx) => {
+    const key = completedKeys.has(Math.round(wp.distanceAlong || 0));
+    return !key && (wp.distanceAlong ?? Infinity) > currentDist;
+  });
+  if (upcoming.length) {
+    addSection(
+      state.t("historyUpcoming"),
+      upcoming,
+      [
+        state.t("historyWpName"),
+        state.t("historyEta"),
+        state.t("historyKmDistance"),
+        state.t("historyDistanceTo"),
+      ],
+      (wp) => {
+        const eta = state.computeEta ? state.computeEta(deviceId, wp.distanceAlong) : null;
+        const etaText = formatEtaTimeOnly(eta, formatTimeOnly);
+        const km = `${Math.round((wp.distanceAlong / 1000) * 10) / 10} km`;
+        const delta = Math.max((wp.distanceAlong ?? 0) - currentDist, 0);
+        const toKm = `${Math.round((delta / 1000) * 10) / 10} km`;
+        return [wp.name || state.t("historyWp"), etaText, km, toKm];
+      }
+    );
+  }
   panel.appendChild(sections);
   overlay.appendChild(panel);
   document.body.appendChild(overlay);

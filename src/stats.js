@@ -113,12 +113,31 @@ export function computeDeviceProgress(deviceId, {
   return { proj, pos, offtrack, endpoint };
 }
 
-export function markActiveOnRoute(deviceId, progress, activeStartTimes, now = Date.now()) {
+function findActiveStartTime(deviceId, positionsHistory) {
+  if (!positionsHistory?.get) return null;
+  const hist = positionsHistory.get(deviceId) || [];
+  let hint = null;
+  for (let i = 0; i < hist.length; i += 1) {
+    const sample = hist[i];
+    if (!sample || !Number.isFinite(sample.t)) continue;
+    const proj = projectOnRouteWithHint({ lat: sample.lat, lng: sample.lng }, hint);
+    if (!proj || proj.distanceAlong == null) continue;
+    hint = proj.distanceAlong;
+    if (proj.distanceAlong >= ACTIVE_DISTANCE_THRESHOLD) {
+      return sample.t;
+    }
+  }
+  return null;
+}
+
+export function markActiveOnRoute(deviceId, progress, activeStartTimes, now = Date.now(), positionsHistory = null) {
   if (!progress || progress.offtrack) return;
   if (progress.proj?.distanceAlong == null) return;
   if (progress.proj.distanceAlong < ACTIVE_DISTANCE_THRESHOLD) return;
   if (!activeStartTimes.has(deviceId)) {
-    activeStartTimes.set(deviceId, now);
+    const histStart = findActiveStartTime(deviceId, positionsHistory);
+    const startMs = Number.isFinite(histStart) ? histStart : now;
+    activeStartTimes.set(deviceId, startMs);
   }
 }
 

@@ -526,8 +526,45 @@ body {
   font-size: 0.95rem;
 }
 
+.history-row.history-date {
+  text-align: center;
+  font-weight: 700;
+}
+
 .history-row:last-child {
   border-bottom: none;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.history-table th,
+.history-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #e5e9f0;
+  text-align: left;
+}
+
+.history-table thead th {
+  font-weight: 700;
+  background: #f7fafc;
+}
+
+.history-table tr.history-date td {
+  text-align: center;
+  font-weight: 700;
+  background: #eef2f7;
+}
+
+.history-table tbody tr:nth-child(odd):not(.history-date) {
+  background: #f9fbff;
+}
+
+.history-table tbody tr:nth-child(even):not(.history-date) {
+  background: #f3f7fc;
 }
 
 .history-empty {
