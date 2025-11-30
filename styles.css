@@ -171,7 +171,6 @@ body {
   flex: 1;
   display: flex;
   padding: 0.75rem;
-  height: calc(100vh - 56px);
 }
 
 #map {
@@ -180,11 +179,12 @@ body {
   border-radius: 10px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   overflow: hidden;
+  position: relative;
 }
 
 .help-trigger {
   position: absolute;
-  bottom: 16px;
+  bottom: calc(var(--elevation-offset, 0px) + 16px);
   left: 16px;
   width: 28px;
   height: 28px;
@@ -206,7 +206,7 @@ body {
 
 .help-popup {
   position: fixed;
-  bottom: 52px;
+  bottom: calc(var(--elevation-offset, 0px) + 52px);
   left: 12px;
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid #e5e9f0;
@@ -543,6 +543,17 @@ body {
   height: clamp(90px, 18vh, 160px);
 }
 
+.elevation-stats {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #f8fafc;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
 .elevation-grid-line {
   stroke: rgba(226, 232, 240, 0.35);
   stroke-width: 0.5;
@@ -573,6 +584,13 @@ body {
   paint-order: stroke;
   stroke: rgba(15, 23, 42, 0.7);
   stroke-width: 1px;
+}
+
+.elevation-stats-label {
+  fill: #f8fafc;
+  font-size: 12px;
+  font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .elevation-empty {

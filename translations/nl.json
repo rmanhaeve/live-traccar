@@ -24,5 +24,12 @@
   "openWaze": "Open in Waze",
   "you": "Jij",
   "toggleYou": "Toon jouw locatie",
-  "downloadGpx": "GPX downloaden"
+  "downloadGpx": "GPX downloaden",
+  "gain": "Stijging",
+  "descent": "Daling",
+  "weatherTitle": "Weer",
+  "weatherFetching": "Weer ophalen…",
+  "weatherUnavailable": "Weer niet beschikbaar",
+  "weatherWind": "Wind",
+  "weatherPrecip": "Regen"
 }

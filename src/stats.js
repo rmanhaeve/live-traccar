@@ -159,3 +159,34 @@ export function computeEta(deviceId, targetDistance, {
   const interval = computeEtaInterval(delta, speedStats, now);
   return { status: "eta", arrival, interval };
 }
+
+export function computeElevationTotals(profile, limitDistance = null) {
+  if (!profile?.distances?.length || !profile?.elevations?.length) return { gain: 0, loss: 0 };
+  const distances = profile.distances;
+  const elevations = profile.elevations;
+  const totalDist = distances[distances.length - 1] || 0;
+  const target = limitDistance != null ? Math.max(0, Math.min(limitDistance, totalDist)) : totalDist;
+  let gain = 0;
+  let loss = 0;
+  for (let i = 1; i < distances.length; i += 1) {
+    const d0 = distances[i - 1];
+    const d1 = distances[i];
+    if (!Number.isFinite(d0) || !Number.isFinite(d1)) continue;
+    if (!Number.isFinite(elevations[i - 1]) || !Number.isFinite(elevations[i])) continue;
+    if (d0 >= target) break;
+    const cappedEnd =
+      target >= d1
+        ? { dist: d1, ele: elevations[i] }
+        : {
+            dist: target,
+            ele: elevations[i - 1] + ((elevations[i] - elevations[i - 1]) * (target - d0)) / (d1 - d0),
+          };
+    const segStartEle = elevations[i - 1];
+    const segEndEle = cappedEnd.ele;
+    const diff = segEndEle - segStartEle;
+    if (diff > 0) gain += diff;
+    else if (diff < 0) loss += Math.abs(diff);
+    if (cappedEnd.dist >= target) break;
+  }
+  return { gain, loss };
+}

@@ -46,6 +46,8 @@ export const DEFAULT_TEXTS = {
   weatherUnavailable: "Weather unavailable",
   weatherWind: "Wind",
   weatherPrecip: "Rain",
+  gain: "Gain",
+  descent: "Descent",
 };
 
 export const TRANSLATIONS_MAP = {

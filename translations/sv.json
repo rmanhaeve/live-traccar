@@ -24,5 +24,12 @@
   "openWaze": "Öppna i Waze",
   "you": "Du",
   "toggleYou": "Visa din position",
-  "downloadGpx": "Ladda ner GPX"
+  "downloadGpx": "Ladda ner GPX",
+  "gain": "Stigning",
+  "descent": "Nedstigning",
+  "weatherTitle": "Väder",
+  "weatherFetching": "Hämtar väder…",
+  "weatherUnavailable": "Väder ej tillgängligt",
+  "weatherWind": "Vind",
+  "weatherPrecip": "Regn"
 }

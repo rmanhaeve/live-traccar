@@ -24,5 +24,12 @@
   "openWaze": "Open in Waze",
   "you": "You",
   "toggleYou": "Show your location",
-  "downloadGpx": "Download GPX"
+  "downloadGpx": "Download GPX",
+  "gain": "Gain",
+  "descent": "Descent",
+  "weatherTitle": "Weather",
+  "weatherFetching": "Loading weather…",
+  "weatherUnavailable": "Weather unavailable",
+  "weatherWind": "Wind",
+  "weatherPrecip": "Rain"
 }

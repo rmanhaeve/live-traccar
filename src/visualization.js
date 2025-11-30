@@ -1,4 +1,5 @@
 import { getRouteDistances, getRoutePoints } from "./route.js";
+import { computeElevationTotals } from "./stats.js";
 
 const colors = [
   "#ef4444",
@@ -56,6 +57,7 @@ const state = {
   elevationProfile: null,
   elevationProgressDistance: null,
   elevationEls: null,
+  elevationTotals: null,
 };
 
 function nextColor(idx) {
@@ -70,6 +72,9 @@ function ensureElevationBar() {
   toggle.type = "button";
   toggle.className = "elevation-toggle";
   toggle.textContent = "▲";
+  const statsEl = document.createElement("div");
+  statsEl.className = "elevation-stats";
+  statsEl.textContent = "";
   const content = document.createElement("div");
   content.className = "elevation-content";
   const chart = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -91,15 +96,47 @@ function ensureElevationBar() {
   const empty = document.createElement("div");
   empty.className = "elevation-empty";
   content.append(chart, empty);
-  container.append(toggle, content);
+  container.append(toggle, statsEl, content);
   document.body.appendChild(container);
   toggle.addEventListener("click", () => {
     const collapsed = container.classList.toggle("collapsed");
     toggle.textContent = collapsed ? "▲" : "▼";
+    updateElevationLayoutPadding();
   });
-  state.elevationEls = { container, toggle, chart, path, progressDot, progressLabel, empty, gridXGroup, gridYGroup };
-  window.addEventListener("resize", () => renderElevationChart());
+  state.elevationEls = {
+    container,
+    toggle,
+    statsEl,
+    chart,
+    path,
+    progressDot,
+    progressLabel,
+    empty,
+    gridXGroup,
+    gridYGroup,
+  };
+  window.addEventListener("resize", () => {
+    renderElevationChart();
+    updateElevationLayoutPadding();
+  });
+  updateElevationLayoutPadding();
   return state.elevationEls;
+}
+
+function updateElevationLayoutPadding() {
+  const els = state.elevationEls || ensureElevationBar();
+  const layout = document.querySelector(".layout");
+  if (!layout) return;
+  const expanded = !els.container.classList.contains("collapsed");
+  const visibleBar = expanded ? els.container.offsetHeight : (els.toggle?.offsetHeight || 0);
+  const pad = Math.max(0, visibleBar) + 8;
+  layout.style.paddingBottom = `${pad}px`;
+  document.documentElement.style.setProperty("--elevation-offset", `${pad}px`);
+  layout.style.height = "";
+  if (state.map && state.map.invalidateSize) {
+    // defer to allow layout paint
+    setTimeout(() => state.map.invalidateSize(), 0);
+  }
 }
 
 function chooseTickStep(range, targetCount = 4) {
@@ -125,6 +162,8 @@ function renderElevationChart() {
   if (!profile || !profile.distances?.length || !profile.elevations?.length) {
     els.empty.textContent = "No elevation data";
     els.chart.classList.add("hidden");
+    if (els.statsEl) els.statsEl.textContent = "";
+    updateElevationLayoutPadding();
     return;
   }
   const distances = profile.distances;
@@ -134,10 +173,17 @@ function renderElevationChart() {
   if (!finiteElevs.length || total <= 0) {
     els.empty.textContent = "No elevation data";
     els.chart.classList.add("hidden");
+    if (els.statsEl) els.statsEl.textContent = "";
+    updateElevationLayoutPadding();
     return;
   }
   els.empty.textContent = "";
   els.chart.classList.remove("hidden");
+  if (els.statsEl && state.elevationTotals) {
+    const gain = Math.round(state.elevationTotals.gain);
+    const loss = Math.round(state.elevationTotals.loss);
+    els.statsEl.textContent = `${state.t("gain")} ${gain} m / ${state.t("descent")} ${loss} m`;
+  }
   const minEle = Math.min(...finiteElevs);
   const maxEle = Math.max(...finiteElevs);
   const w = Math.max(els.chart.clientWidth || 0, 300);
@@ -215,6 +261,7 @@ function renderElevationChart() {
   els.path.setAttribute("stroke", "currentColor");
   els.path.setAttribute("stroke-width", "1.5");
   renderElevationProgress();
+  updateElevationLayoutPadding();
 }
 
 function renderElevationProgress() {
@@ -223,12 +270,16 @@ function renderElevationProgress() {
   if (!profile || !profile.distances?.length) {
     els.progressDot.setAttribute("visibility", "hidden");
     if (els.progressLabel) els.progressLabel.setAttribute("visibility", "hidden");
+    if (els.statsEl) els.statsEl.textContent = "";
+    updateElevationLayoutPadding();
     return;
   }
   const total = profile.distances[profile.distances.length - 1] || 0;
   if (!total || !Number.isFinite(state.elevationProgressDistance)) {
     els.progressDot.setAttribute("visibility", "hidden");
     if (els.progressLabel) els.progressLabel.setAttribute("visibility", "hidden");
+    if (els.statsEl) els.statsEl.textContent = "";
+    updateElevationLayoutPadding();
     return;
   }
   const vb = els.chart.viewBox.baseVal;
@@ -268,10 +319,19 @@ function renderElevationProgress() {
     els.progressLabel.textContent = `${Math.round(yVal)} m`;
     els.progressLabel.setAttribute("visibility", "visible");
   }
+  if (els.statsEl) {
+    const partial = computeElevationTotals(profile, state.elevationProgressDistance);
+    const totalGain = Math.round(state.elevationTotals?.gain || 0);
+    const totalLoss = Math.round(state.elevationTotals?.loss || 0);
+    const curGain = Math.round(partial.gain || 0);
+    const curLoss = Math.round(partial.loss || 0);
+    els.statsEl.textContent = `${state.t("gain")} ${curGain}/${totalGain} m • ${state.t("descent")} ${curLoss}/${totalLoss} m`;
+  }
 }
 
 export function setElevationProfile(profile) {
   state.elevationProfile = profile;
+  state.elevationTotals = computeElevationTotals(profile, null);
   renderElevationChart();
 }
 
