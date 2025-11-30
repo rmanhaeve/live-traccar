@@ -1,9 +1,10 @@
 import { ACTIVE_DISTANCE_THRESHOLD, HISTORY_WINDOW_MS } from "./constants.js";
 import { distanceMeters, toRad } from "./geo.js";
-import { getRouteTotal, projectOnRouteWithHint } from "./route.js";
+import { getRouteTotal, projectOnRoute, projectOnRouteWithHint } from "./route.js";
 
 const ENDPOINT_PROXIMITY_METERS = 30;
 const ETA_CONFIDENCE_Z = 1.645; // ~90% confidence assuming roughly normal speed distribution
+const HINT_STALE_MS = 5 * 60 * 1000;
 
 function selectHistorySamples(positionsHistory, deviceId, activeStartTimes, now) {
   const hist = positionsHistory.get(deviceId) || [];
@@ -100,16 +101,23 @@ export function computeDeviceProgress(deviceId, {
 }) {
   const pos = lastPositions.get(deviceId);
   if (!pos) return null;
+  const now = Date.now();
   const last = lastProjection.get(deviceId);
-  const hint = last?.distanceAlong;
+  const hintFresh = last && last.t && now - last.t > HINT_STALE_MS ? null : last?.distanceAlong;
   const heading = getRecentHeading(positionsHistory, deviceId);
-  const proj = projectOnRouteWithHint({ lat: pos.latitude, lng: pos.longitude }, hint, heading);
+  let proj = projectOnRouteWithHint({ lat: pos.latitude, lng: pos.longitude }, hintFresh, heading);
+  if (!proj || proj.offtrack) {
+    const fallback = projectOnRoute({ lat: pos.latitude, lng: pos.longitude });
+    if (fallback && (!fallback.offtrack || (proj?.dist2 != null && fallback.dist2 < (proj?.dist2 ?? Infinity)))) {
+      proj = fallback;
+    }
+  }
   if (!proj) return null;
   const offtrack = Boolean(proj.offtrack);
   const total = getRouteTotal();
   const endpoint = !offtrack ? inferEndpoint(deviceId, proj.distanceAlong, total, last, positionsHistory) : null;
   // store last projection for continuity
-  lastProjection.set(deviceId, { distanceAlong: proj.distanceAlong, t: Date.now() });
+  lastProjection.set(deviceId, { distanceAlong: proj.distanceAlong, t: now });
   return { proj, pos, offtrack, endpoint };
 }
 

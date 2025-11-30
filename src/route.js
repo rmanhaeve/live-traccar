@@ -5,6 +5,9 @@ let routeDistances = [];
 let routeAvgLat = 0;
 let routeTotal = 0;
 let routeElevations = [];
+const HINT_TOLERANCE_METERS = 150;
+const HINT_PENALTY_PER_METER = 0.2;
+const HEADING_PENALTY_METERS = 30;
 
 export function parseGpx(xmlText) {
   const xml = new DOMParser().parseFromString(xmlText, "application/xml");
@@ -125,35 +128,35 @@ export function matchPositionToRoute(latlng, opts = {}) {
     const py = a._y + seg.y * t;
     const d2 = (px - tx) * (px - tx) + (py - ty) * (py - ty);
     const segDist = (routeDistances[i] || 0) + Math.sqrt(segLen2) * t;
-    let angleScore = 0;
+    let headingPenalty = 0;
     if (wantHeading) {
       const segAngle = a._segAngle;
       let diff = Math.abs(segAngle - headingRad);
       diff = Math.min(diff, Math.abs(2 * Math.PI - diff));
-      angleScore = Math.cos(diff);
+      headingPenalty = (1 - Math.cos(diff)) * HEADING_PENALTY_METERS;
     }
-    const score = (1 / (Math.sqrt(d2) + 1e-3)) * 0.8 + (wantHeading ? angleScore * 0.2 : 0);
+    const lateral = Math.sqrt(d2);
+    const hintPenalty =
+      hint != null
+        ? Math.max(Math.abs(segDist - hint) - HINT_TOLERANCE_METERS, 0) * HINT_PENALTY_PER_METER
+        : 0;
+    const combined = lateral + hintPenalty + headingPenalty;
     candidates.push({
       i,
       t,
       d2,
       segDist,
-      score,
+      combined,
+      lateral,
       point: { lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t },
     });
   }
   if (!candidates.length) return null;
-  candidates.sort((a, b) => a.d2 - b.d2);
-  let best = candidates[0];
-  if (hint != null) {
-    for (let j = 0; j < Math.min(candidates.length, 10); j += 1) {
-      const c = candidates[j];
-      if (Math.abs(c.segDist - hint) < 200) {
-        best = c;
-        break;
-      }
-    }
-  }
+  candidates.sort((a, b) => {
+    if (a.combined === b.combined) return a.lateral - b.lateral;
+    return a.combined - b.combined;
+  });
+  const best = candidates[0];
   const offtrack = Math.sqrt(best.d2) > 200;
   return { dist2: best.d2, distanceAlong: best.segDist, point: best.point, offtrack };
 }

@@ -86,6 +86,25 @@ assert.equal(fallbackWaypoints.length, 2);
 assert.equal(fallbackWaypoints[0].name, "Start");
 assert.equal(fallbackWaypoints[1].name, "Finish");
 
+// Hinted matching should disambiguate overlapping out-and-back sections
+buildRouteProfile([
+  [
+    [0, 0],
+    [0, 0.001],
+    [0, 0.002],
+    [0, 0.001],
+    [0, 0],
+  ],
+]);
+const overlapPoint = { lat: 0, lng: 0.001 };
+const noHint = matchPositionToRoute(overlapPoint);
+assert(noHint);
+assert.ok(noHint.distanceAlong < 200);
+const hinted = matchPositionToRoute(overlapPoint, { hintDistanceAlong: 330 });
+assert(hinted);
+assert.ok(hinted.distanceAlong > 250);
+assert.equal(hinted.offtrack, false);
+
 // parseGpx should extract segments and waypoints from GPX XML
 const gpx = `
 <gpx>

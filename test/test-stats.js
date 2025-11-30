@@ -23,6 +23,19 @@ function setupRoute() {
 
 setupRoute();
 
+function setupAmbiguousRoute() {
+  buildRouteProfile([
+    [
+      [0, 0],
+      [0, 0.002],
+    ],
+    [
+      [0.002, 0],
+      [0.002, 0.002],
+    ],
+  ]);
+}
+
 // getAverageSpeedMs should use samples within the window and return 0 for sparse data
 const positionsHistory = new Map();
 const deviceId = 42;
@@ -60,6 +73,32 @@ const now = 50000;
 activeStartTimes.delete(deviceId);
 markActiveOnRoute(deviceId, progress, activeStartTimes, now, positionsHistory);
 assert.equal(activeStartTimes.get(deviceId), positionsHistory.get(deviceId)[1].t);
+
+// Should ignore stale or misleading hints when projecting positions
+setupAmbiguousRoute();
+const hintyDeviceId = 99;
+const hintyPositions = new Map([[hintyDeviceId, { latitude: 0, longitude: 0.001 }]]);
+const staleHint = new Map([[hintyDeviceId, { distanceAlong: 650, t: Date.now() - 10 * 60 * 1000 }]]);
+let hintyProgress = computeDeviceProgress(hintyDeviceId, {
+  lastPositions: hintyPositions,
+  lastProjection: staleHint,
+  positionsHistory: new Map(),
+});
+assert(hintyProgress);
+assert.equal(hintyProgress.offtrack, false);
+assert(hintyProgress.proj.distanceAlong < 200);
+
+const freshMisleadingHint = new Map([[hintyDeviceId, { distanceAlong: 650, t: Date.now() }]]);
+hintyProgress = computeDeviceProgress(hintyDeviceId, {
+  lastPositions: hintyPositions,
+  lastProjection: freshMisleadingHint,
+  positionsHistory: new Map(),
+});
+assert(hintyProgress);
+assert.equal(hintyProgress.offtrack, false);
+assert(hintyProgress.proj.distanceAlong < 200);
+
+setupRoute(); // restore base route for following tests
 
 // computeEta should cover offtrack, passed, unknown and eta statuses
 const etaOfftrack = computeEta(99, 10, { lastPositions: new Map(), lastProjection: new Map(), positionsHistory, activeStartTimes });
