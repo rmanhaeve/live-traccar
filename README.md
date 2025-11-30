@@ -9,9 +9,10 @@ Lightweight static viewer that overlays GPX routes and live Traccar device locat
   - `translationFile`: translation JSON (default: `translations/en.json`).
   - `traccarUrl`: base URL of your Traccar server.
   - `token`: API token for the account that can view the devices.
-  - Optional: `refreshSeconds`, `deviceIds` (array to whitelist specific devices), `kmMarkerInterval` (base km spacing for track markers; set to 0/false to disable), `showViewerLocation` (show a “You” dot using browser geolocation), `staleMinutes` (after this age, participant dots/legend turn gray), `startTime` (ISO string to ignore history before the event start). Spacing adapts automatically with zoom (denser when zoomed in). ETAs use average speed over the last hour; if insufficient data, they fall back to available history/instant speed. Off-route threshold: >200 m from the track counts as off-route (ETAs will show “participant not on track”).
+  - Optional: `refreshSeconds`, `deviceIds` (array to whitelist specific devices), `kmMarkerInterval` (base km spacing for track markers; set to 0/false to disable), `showViewerLocation` (show a “You” dot using browser geolocation), `staleMinutes` (after this age, participant dots/legend turn gray), `startTime` (ISO string to ignore history before the event start), `debugStartTime`/`debugSpeedKph` (override the start datetime and speed for simulated riders in debug mode). Spacing adapts automatically with zoom (denser when zoomed in). ETAs use average speed over the last hour; if insufficient data, they fall back to available history/instant speed. Off-route threshold: >200 m from the track counts as off-route (ETAs will show “participant not on track”).
 
 Debug mode is controlled via URL query params: append `?debug=1` (or `debug=true/on/yes`) to enable fake riders; use `debug=0`/`false` to disable.
+- When debug mode is on, no calls are made to the real Traccar API. Fake riders are generated forward from `debugStartTime` at `debugSpeedKph`, with staggered start times to spread them along the route.
 - Leaflet assets are vendored in `vendor/leaflet` (no CDN needed). `config.json` is git-ignored so you don’t accidentally commit secrets.
 
 ## Running locally

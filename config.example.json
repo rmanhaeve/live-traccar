@@ -9,4 +9,7 @@
   "kmMarkerInterval": 1,
   "showViewerLocation": true,
   "staleMinutes": 15,
+  "startTime": null,
+  "debugStartTime": null,
+  "debugSpeedKph": 60
 }

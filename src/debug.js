@@ -1,10 +1,7 @@
 import { pointAtDistance, getRoutePoints, getRouteTotal } from "./route.js";
 import { getAverageSpeedMs, getRecentHeading } from "./stats.js";
 
-const MOVING_DEVICE_IDS = [10001, 10002, 10003, 10004, 10005];
-const STATIC_START_ID = 10006;
-const STATIC_FINISH_ID = 10007;
-const DEBUG_SPEED_MS = 60 / 3.6; // 60 km/h
+const DEBUG_DEVICE_IDS = [10001, 10002, 10003, 10004, 10005];
 const DEBUG_JITTER_METERS = 5;
 const HISTORY_INTERVAL_SECONDS = 5;
 
@@ -44,6 +41,23 @@ function ensureHistory(deviceId, startMs, nowMs, positionsHistory, points, trave
   positionsHistory.set(deviceId, hist);
 }
 
+function parseStartMs(config, nowMs) {
+  const raw = config?.debugStartTime || config?.startTime;
+  const parsed = raw ? Date.parse(raw) : NaN;
+  if (Number.isFinite(parsed)) return parsed;
+  return nowMs;
+}
+
+function initialStartMsForDevice(idx, total, speedMs, baseStartMs, nowMs, deviceCount) {
+  const spacing = total > 0 ? total / Math.max(deviceCount, 1) : 0;
+  const targetDist = Math.min(total, spacing * idx);
+  const offsetMs = speedMs > 0 ? (targetDist / speedMs) * 1000 : 0;
+  // Start earlier for higher target distances so they appear staggered along the track
+  const estStart = baseStartMs - offsetMs;
+  // Avoid future start dates that would put them behind the start
+  return Math.min(estStart, nowMs);
+}
+
 export function buildDebugPositions(
   debugState,
   config,
@@ -53,72 +67,48 @@ export function buildDebugPositions(
 ) {
   const total = routeTotalOverride || getRouteTotal() || 0;
   const points = routePointsOverride || getRoutePoints() || [];
-  if (!total || !points.length) {
-    const fallbackIds = [...MOVING_DEVICE_IDS, STATIC_START_ID, STATIC_FINISH_ID];
-    return fallbackIds.map((id, idx) => ({
+  const nowMs = Date.now();
+  const speedMs = Math.max((config?.debugSpeedKph ?? 60) / 3.6, 0);
+  const baseStartMs = parseStartMs(config, nowMs);
+
+  if (!total || !points.length || !speedMs) {
+    return DEBUG_DEVICE_IDS.map((id, idx) => ({
       deviceId: id,
       latitude: idx * 0.01,
       longitude: idx * 0.01,
-      speed: 0,
-      deviceTime: new Date().toISOString(),
+      speed: speedMs / 0.514444 || 0,
+      deviceTime: new Date(nowMs).toISOString(),
     }));
   }
-  const stepSeconds = config?.refreshSeconds || 10;
-  const nowMs = Date.now();
-  const maybeAdvance = (deviceId, idx) => {
-    const state = debugState.get(deviceId) || {
-      distanceAlong: (total * idx) / MOVING_DEVICE_IDS.length,
-      lastMs: nowMs - stepSeconds * 1000,
-      startMs: nowMs - ((total * idx) / MOVING_DEVICE_IDS.length / DEBUG_SPEED_MS) * 1000,
-    };
-    const elapsedSeconds = state.lastMs ? (nowMs - state.lastMs) / 1000 : stepSeconds;
-    const delta = Math.max(elapsedSeconds, 0) * DEBUG_SPEED_MS;
-    state.distanceAlong = Math.min(total, state.distanceAlong + delta);
-    state.lastMs = nowMs;
-    if (!state.startMs) state.startMs = nowMs - (state.distanceAlong / DEBUG_SPEED_MS) * 1000;
-    debugState.set(deviceId, state);
-    const basePt = pointAtDistance(state.distanceAlong) || points[0];
+
+  const devices = config?.debugDeviceIds && Array.isArray(config.debugDeviceIds) && config.debugDeviceIds.length
+    ? config.debugDeviceIds
+    : DEBUG_DEVICE_IDS;
+
+  const results = [];
+  devices.forEach((deviceId, idx) => {
+    let state = debugState.get(deviceId);
+    if (!state) {
+      const startMs = initialStartMsForDevice(idx, total, speedMs, baseStartMs, nowMs, devices.length);
+      state = { startMs };
+      debugState.set(deviceId, state);
+    }
+    const elapsedSec = Math.max(0, (nowMs - state.startMs) / 1000);
+    const traveled = Math.min(total, speedMs * elapsedSec);
+    const basePt = pointAtDistance(traveled) || points[points.length - 1] || points[0];
     const noisy = jitterPoint(basePt);
-    ensureHistory(deviceId, state.startMs, nowMs, positionsHistory, points, DEBUG_SPEED_MS, total);
-    return {
+    ensureHistory(deviceId, state.startMs, nowMs, positionsHistory, points, speedMs, total);
+    results.push({
       deviceId,
       latitude: noisy.lat,
       longitude: noisy.lng,
-      speed: DEBUG_SPEED_MS / 0.514444, // knots
+      speed: speedMs / 0.514444, // knots
       deviceTime: new Date(nowMs).toISOString(),
-    };
-  };
-  const startPt = points[0] || { lat: 0, lng: 0 };
-  const finishPt = pointAtDistance(total) || points[points.length - 1] || startPt;
-  const ensureStatic = (deviceId, basePt, hintDistanceAlong, traveledDistance, travelSpeedMs, startMsOverride) => {
-    let state = debugState.get(deviceId);
-    if (!state || !state.static) {
-      const noisy = jitterPoint(basePt);
-      state = { static: true, lat: noisy.lat, lng: noisy.lng };
-      debugState.set(deviceId, state);
-    }
-    const startMs =
-      startMsOverride != null
-        ? startMsOverride
-        : travelSpeedMs > 0
-          ? nowMs - (traveledDistance / travelSpeedMs) * 1000
-          : nowMs - HISTORY_INTERVAL_SECONDS * 1000 * 3;
-    ensureHistory(deviceId, startMs, nowMs, positionsHistory, points, travelSpeedMs, total);
-    return {
-      deviceId,
-      latitude: state.lat,
-      longitude: state.lng,
-      speed: 0,
-      deviceTime: new Date().toISOString(),
-      projHintDistanceAlong: hintDistanceAlong,
-    };
-  };
-  const moving = MOVING_DEVICE_IDS.map((id, idx) => maybeAdvance(id, idx));
-  const staticOnes = [
-    ensureStatic(STATIC_START_ID, startPt, 0, 0, 0, nowMs - HISTORY_INTERVAL_SECONDS * 1000 * 5),
-    ensureStatic(STATIC_FINISH_ID, finishPt, total, total, DEBUG_SPEED_MS, nowMs - (total / DEBUG_SPEED_MS) * 1000),
-  ];
-  return [...moving, ...staticOnes];
+      projHintDistanceAlong: traveled,
+    });
+  });
+
+  return results;
 }
 
 export function installDebugInfoHook({

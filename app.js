@@ -364,19 +364,17 @@ function selectDevice(deviceId, { focus = false } = {}) {
 
 async function refreshDevices() {
   let list = [];
-  if (config?.traccarUrl && config?.token) {
+  if (!config?.debug && config?.traccarUrl && config?.token) {
     list = await fetchDevices(config);
   }
   if (config?.debug) {
-    list.push(
+    list = [
       { id: 10001, name: "Debug Rider 1" },
       { id: 10002, name: "Debug Rider 2" },
       { id: 10003, name: "Debug Rider 3" },
       { id: 10004, name: "Debug Rider 4" },
       { id: 10005, name: "Debug Rider 5" },
-      { id: 10006, name: "Debug Start (idle)" },
-      { id: 10007, name: "Debug Finish (stopped)" }
-    );
+    ];
   }
   devices.clear();
   list.forEach((d) => devices.set(d.id, d));
@@ -545,7 +543,7 @@ function handlePosition(position) {
 
 async function refreshPositions() {
   let positions = [];
-  if (config?.traccarUrl && config?.token) {
+  if (!config?.debug && config?.traccarUrl && config?.token) {
     positions = await fetchPositions(config);
   }
   if (config?.debug) {

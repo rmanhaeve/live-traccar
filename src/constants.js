@@ -6,6 +6,8 @@ export const DEFAULT_CONFIG = {
   showViewerLocation: false,
   staleMinutes: 15,
   startTime: null,
+  debugStartTime: null,
+  debugSpeedKph: 60,
   showKmMarkers: true,
   showWaypoints: true,
 };

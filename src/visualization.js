@@ -150,6 +150,19 @@ function showHistoryOverlay(deviceId) {
   state.historyOverlay = overlay;
 }
 
+function attachHistoryButton(marker, deviceId) {
+  const popupEl = marker.getPopup()?.getElement();
+  if (!popupEl) return;
+  const btnEl = popupEl.querySelector(".history-inline-btn");
+  if (!btnEl || btnEl.dataset.bound === "1") return;
+  btnEl.dataset.bound = "1";
+  btnEl.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showHistoryOverlay(deviceId);
+  });
+}
+
 export function initMap() {
   state.map = L.map("map", { worldCopyJump: true }).setView([0, 0], 2);
   state.map.createPane("tracksPane");
@@ -543,15 +556,9 @@ export function updateMarker(position) {
   }
   marker.off("popupopen");
   marker.on("popupopen", () => {
-    const btnEl = marker.getPopup()?.getElement()?.querySelector(".history-inline-btn");
-    if (btnEl) {
-      btnEl.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        showHistoryOverlay(position.deviceId);
-      });
-    }
+    attachHistoryButton(marker, position.deviceId);
   });
+  attachHistoryButton(marker, position.deviceId);
   extendBounds(coords);
 }
 
@@ -757,4 +764,9 @@ export function setSelectedDeviceId(deviceId) {
   state.legendContainer.querySelectorAll(".legend-btn").forEach((btn) => {
     btn.classList.toggle("selected", Number(btn.dataset.deviceId) === deviceId);
   });
+}
+
+// Test-only helper to access internal state
+export function __getVizTestState() {
+  return state;
 }

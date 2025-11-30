@@ -5,6 +5,7 @@ const tests = [
   "./test-traccar.js",
   "./test-matcher.js",
   "./test-debug-history.js",
+  "./test-visualization-history.js",
 ];
 
 for (const test of tests) {
