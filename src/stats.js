@@ -3,6 +3,50 @@ import { distanceMeters, toRad } from "./geo.js";
 import { getRouteTotal, projectOnRouteWithHint } from "./route.js";
 
 const ENDPOINT_PROXIMITY_METERS = 30;
+const ETA_CONFIDENCE_Z = 1.645; // ~90% confidence assuming roughly normal speed distribution
+
+function selectHistorySamples(positionsHistory, deviceId, activeStartTimes, now) {
+  const hist = positionsHistory.get(deviceId) || [];
+  const activeSince = activeStartTimes.get(deviceId) || null;
+  const cutoff = now - HISTORY_WINDOW_MS;
+  const filtered = hist.filter((p) => p.t >= cutoff && (!activeSince || p.t >= activeSince));
+  if (filtered.length >= 2) return filtered;
+  if (filtered.length) return filtered;
+  if (hist.length) return hist;
+  return [];
+}
+
+function summarizeSpeeds(samples) {
+  if (!samples || samples.length < 2) return null;
+  const speeds = [];
+  let totalDist = 0;
+  let totalTimeMs = 0;
+  for (let i = 1; i < samples.length; i += 1) {
+    const prev = samples[i - 1];
+    const curr = samples[i];
+    if (!prev || !curr) continue;
+    const spanMs = (curr.t || 0) - (prev.t || 0);
+    if (!Number.isFinite(spanMs) || spanMs <= 0) continue;
+    const segDist = distanceMeters([prev.lat, prev.lng], [curr.lat, curr.lng]);
+    const segSpeed = segDist / (spanMs / 1000);
+    if (Number.isFinite(segSpeed) && segSpeed >= 0) {
+      speeds.push(segSpeed);
+      totalDist += segDist;
+      totalTimeMs += spanMs;
+    }
+  }
+  if (!speeds.length || totalTimeMs <= 0) return null;
+  const averageMs = totalDist / (totalTimeMs / 1000);
+  const varianceSum = speeds.reduce((acc, s) => acc + (s - averageMs) ** 2, 0);
+  const speedStdDev = Math.sqrt(speeds.length > 1 ? varianceSum / (speeds.length - 1) : 0);
+  return { averageMs, speedStdDev, segmentCount: speeds.length };
+}
+
+function getSpeedStats(positionsHistory, deviceId, activeStartTimes, now = Date.now()) {
+  const samples = selectHistorySamples(positionsHistory, deviceId, activeStartTimes, now);
+  if (!samples || samples.length < 2) return null;
+  return summarizeSpeeds(samples);
+}
 
 function inferEndpoint(deviceId, distanceAlong, total, lastProjection, positionsHistory) {
   if (!Number.isFinite(distanceAlong) || !Number.isFinite(total) || total <= 0) return null;
@@ -29,21 +73,8 @@ function inferEndpoint(deviceId, distanceAlong, total, lastProjection, positions
 }
 
 export function getAverageSpeedMs(positionsHistory, deviceId, activeStartTimes, now = Date.now()) {
-  const hist = positionsHistory.get(deviceId) || [];
-  const activeSince = activeStartTimes.get(deviceId) || null;
-  const cutoff = now - HISTORY_WINDOW_MS;
-  const filtered = hist.filter((p) => p.t >= cutoff && (!activeSince || p.t >= activeSince));
-  const samples = filtered.length >= 2 ? filtered : filtered.length ? filtered : hist.length ? hist : null;
-  if (!samples || samples.length < 2) return 0;
-  let dist = 0;
-  const startT = samples[0].t;
-  const endT = samples[samples.length - 1].t;
-  for (let i = 1; i < samples.length; i += 1) {
-    dist += distanceMeters([samples[i - 1].lat, samples[i - 1].lng], [samples[i].lat, samples[i].lng]);
-  }
-  const span = (endT || 0) - (startT || 0);
-  if (span <= 0) return 0;
-  return dist / (span / 1000);
+  const stats = getSpeedStats(positionsHistory, deviceId, activeStartTimes, now);
+  return stats?.averageMs || 0;
 }
 
 export function getRecentHeading(positionsHistory, deviceId, points = 5) {
@@ -91,18 +122,40 @@ export function markActiveOnRoute(deviceId, progress, activeStartTimes, now = Da
   }
 }
 
+function computeEtaInterval(delta, speedStats, now) {
+  if (!speedStats) return null;
+  const { averageMs, speedStdDev, segmentCount } = speedStats;
+  if (!averageMs || averageMs <= 0) return null;
+  if (!speedStdDev || speedStdDev <= 0) return null;
+  if (!segmentCount || segmentCount < 2) return null;
+  const standardError = speedStdDev / Math.sqrt(segmentCount);
+  if (!Number.isFinite(standardError) || standardError <= 0) return null;
+  const margin = ETA_CONFIDENCE_Z * standardError;
+  if (!Number.isFinite(margin) || margin <= 0 || margin >= averageMs) return null;
+  const fastSpeed = averageMs + margin;
+  const slowSpeed = averageMs - margin;
+  if (fastSpeed <= 0 || slowSpeed <= 0) return null;
+  const lowArrival = new Date(now + (delta / fastSpeed) * 1000);
+  const highArrival = new Date(now + (delta / slowSpeed) * 1000);
+  if (Number.isNaN(lowArrival.getTime()) || Number.isNaN(highArrival.getTime())) return null;
+  return { low: lowArrival, high: highArrival, confidence: 0.9 };
+}
+
 export function computeEta(deviceId, targetDistance, {
   lastPositions,
   lastProjection,
   positionsHistory,
   activeStartTimes,
 }) {
+  const now = Date.now();
   const progress = computeDeviceProgress(deviceId, { lastPositions, lastProjection, positionsHistory });
   if (!progress || progress.offtrack) return { status: "offtrack" };
-  const speedMs = getAverageSpeedMs(positionsHistory, deviceId, activeStartTimes);
+  const speedStats = getSpeedStats(positionsHistory, deviceId, activeStartTimes, now);
+  const speedMs = speedStats?.averageMs || 0;
   const delta = targetDistance - progress.proj.distanceAlong;
   if (delta <= 0) return { status: "passed" };
   if (!speedMs || speedMs <= 0) return { status: "unknown" };
-  const arrival = new Date(Date.now() + (delta / speedMs) * 1000);
-  return { status: "eta", arrival };
+  const arrival = new Date(now + (delta / speedMs) * 1000);
+  const interval = computeEtaInterval(delta, speedStats, now);
+  return { status: "eta", arrival, interval };
 }

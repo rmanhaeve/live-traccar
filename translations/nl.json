@@ -1,6 +1,8 @@
 {
   "eta": "ETA",
   "etaHere": "ETA hier: {eta}",
+  "etaMargin": "±{minutes} min",
+  "etaMarginSubMinute": "±<1 min",
   "passed": "gepasseerd",
   "offtrack": "deelnemer niet op parcours",
   "unknown": "onbekend",

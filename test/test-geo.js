@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { distanceMeters, interpolatePoint, toRad } from "../src/geo.js";
+import { distanceMeters, toRad } from "../src/geo.js";
 
 function approxEqual(a, b, tolerance = 1e-6) {
   assert.ok(Math.abs(a - b) <= tolerance, `${a} ≉ ${b} (tol ${tolerance})`);
@@ -18,10 +18,5 @@ const distLat = distanceMeters([0, 0], [1, 0]);
 const distLon = distanceMeters([0, 0], [0, 1]);
 assert.ok(Math.abs(distLat - 111200) < 500);
 assert.ok(Math.abs(distLon - 111200) < 500);
-
-// interpolatePoint should blend endpoints linearly
-assert.deepEqual(interpolatePoint([0, 0], [10, 10], 0), [0, 0]);
-assert.deepEqual(interpolatePoint([0, 0], [10, 10], 1), [10, 10]);
-assert.deepEqual(interpolatePoint([0, 0], [10, 10], 0.25), [2.5, 2.5]);
 
 console.log("geo tests passed");

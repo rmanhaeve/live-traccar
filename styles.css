@@ -22,6 +22,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
   padding: 0.75rem 1rem;
   background: linear-gradient(120deg, #0f5faf, #0c8bc7);
   color: #f7fbff;
@@ -37,6 +39,81 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.weather-widget {
+  position: relative;
+}
+
+.weather-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 140px;
+}
+
+.weather-summary {
+  font-weight: 600;
+  color: #0f5faf;
+}
+
+.weather-panel {
+  position: absolute;
+  right: 0;
+  margin-top: 6px;
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+  width: 240px;
+  padding: 10px 12px;
+  z-index: 900;
+}
+
+.weather-panel.hidden {
+  display: none;
+}
+
+.weather-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.weather-updated {
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.weather-forecast {
+  display: grid;
+  gap: 6px;
+}
+
+.weather-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  background: #f5f7fb;
+  border-radius: 8px;
+}
+
+.weather-label {
+  font-weight: 600;
+}
+
+.weather-meta {
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.weather-error {
+  color: #b91c1c;
+  font-size: 0.9rem;
 }
 
 .topbar-btn {
@@ -50,6 +127,20 @@ body {
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.topbar-btn.icon-btn {
+  padding: 6px;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.topbar-btn.icon-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .topbar-btn:hover {
@@ -356,11 +447,35 @@ body {
   border-radius: 8px;
   padding: 10px;
   background: #f9fbff;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.history-toggle {
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid #0f5faf;
+  border-bottom: 2px solid #0f5faf;
+  transform: rotate(45deg);
+  transition: transform 120ms ease;
 }
 
 .history-label {
   font-weight: 700;
-  margin-bottom: 6px;
 }
 
 .history-row {
@@ -378,6 +493,93 @@ body {
   font-size: 0.95rem;
 }
 
+.history-section.collapsed .history-content {
+  display: none;
+}
+
+.history-toggle.collapsed {
+  transform: rotate(-45deg);
+}
+
+.elevation-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(15, 23, 42, 0.9);
+  color: #e2e8f0;
+  padding: 6px 10px;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.25);
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: transform 180ms ease;
+}
+
+.elevation-bar.collapsed {
+  transform: translateY(calc(100% - 40px));
+}
+
+.elevation-toggle {
+  align-self: center;
+  background: transparent;
+  border: 1px solid rgba(226, 232, 240, 0.35);
+  color: inherit;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.elevation-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.elevation-chart {
+  width: 100%;
+  height: clamp(90px, 18vh, 160px);
+}
+
+.elevation-grid-line {
+  stroke: rgba(226, 232, 240, 0.35);
+  stroke-width: 0.5;
+}
+
+.elevation-grid-label {
+  fill: #e2e8f0;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.elevation-path {
+  stroke: #38bdf8;
+  stroke-width: 2;
+  fill: none;
+}
+
+.elevation-progress-dot {
+  fill: #fcd34d;
+  stroke: #0f172a;
+  stroke-width: 0.8;
+}
+
+.elevation-progress-label {
+  fill: #f8fafc;
+  font-size: 12px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: rgba(15, 23, 42, 0.7);
+  stroke-width: 1px;
+}
+
+.elevation-empty {
+  font-size: 0.9rem;
+  color: #cbd5e1;
+}
+
 @media (max-width: 960px) {
   .layout {
     padding: 0.5rem;
@@ -386,5 +588,27 @@ body {
 
   #map {
     min-height: 320px;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .weather-toggle {
+    width: 100%;
+  }
+
+  .weather-panel {
+    position: static;
+    width: 100%;
+    margin-top: 0;
   }
 }

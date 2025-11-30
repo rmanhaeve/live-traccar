@@ -11,5 +11,6 @@
   "staleMinutes": 15,
   "startTime": null,
   "debugStartTime": null,
-  "debugSpeedKph": 60
+  "debugSpeedKph": 60,
+  "historyHours": 24
 }

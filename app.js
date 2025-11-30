@@ -3,7 +3,6 @@ import {
   DEFAULT_TEXTS,
   TRANSLATIONS_MAP,
   LANGUAGE_COOKIE,
-  HISTORY_WINDOW_MS,
 } from "./src/constants.js";
 import {
   parseGpx,
@@ -15,6 +14,8 @@ import {
   getRouteDistances,
   getRoutePoints,
   getRouteTotal,
+  getRouteAvgLat,
+  getRouteElevationProfile,
 } from "./src/route.js";
 import {
   computeDeviceProgress,
@@ -39,6 +40,8 @@ import {
   fitToData,
   clearRoute,
   setRouteWaypoints,
+  setElevationProfile,
+  setElevationProgress,
   startViewerLocation as vizStartViewerLocation,
   stopViewerLocation as vizStopViewerLocation,
   updateHelpContent,
@@ -56,6 +59,22 @@ let langSelector;
 let userPreferences;
 let routeWaypoints = [];
 let distanceTicks = [];
+let weatherToggle;
+let weatherPanel;
+let weatherForecastEl;
+let weatherErrorEl;
+let weatherSummaryEl;
+let weatherUpdatedEl;
+const weatherState = { expanded: false, pending: false };
+const WEATHER_STALE_MS = 10 * 60 * 1000;
+const weatherCache = new Map();
+const DEFAULT_HISTORY_HOURS = 24;
+
+function getHistoryRetentionMs() {
+  const hours = Number(config?.historyHours ?? DEFAULT_HISTORY_HOURS);
+  if (!Number.isFinite(hours) || hours <= 0) return DEFAULT_HISTORY_HOURS * 60 * 60 * 1000;
+  return hours * 60 * 60 * 1000;
+}
 
 const devices = new Map();
 const lastSeen = new Map();
@@ -321,7 +340,227 @@ function initDownloadButton() {
 
 function updateDownloadButtonLabel() {
   if (!downloadButton) return;
-  downloadButton.textContent = t("downloadGpx");
+  const label = t("downloadGpx");
+  downloadButton.setAttribute("aria-label", label);
+  downloadButton.setAttribute("title", label);
+}
+
+function getRouteCenter() {
+  const pts = getRoutePoints();
+  if (!pts?.length) return null;
+  const avgLat = getRouteAvgLat();
+  const avgLng = pts.reduce((sum, p) => sum + p.lng, 0) / pts.length;
+  return { lat: avgLat, lng: avgLng };
+}
+
+function renderWeatherSummary(data) {
+  if (!weatherSummaryEl) return;
+  const summary = data?.summary;
+  if (!summary) {
+    weatherSummaryEl.textContent = t("weatherUnavailable");
+    return;
+  }
+  const temp = summary.temp;
+  const wind = summary.wind;
+  const precip = summary.precip;
+  const parts = [];
+  if (Number.isFinite(temp)) parts.push(`${Math.round(temp)}°C`);
+  if (Number.isFinite(wind)) parts.push(`${Math.round(wind)} km/h ${t("weatherWind")}`);
+  if (Number.isFinite(precip) && precip > 0) parts.push(`${precip.toFixed(1)} mm ${t("weatherPrecip")}`);
+  weatherSummaryEl.textContent = parts.join(" · ") || t("weatherUnavailable");
+}
+
+function renderWeatherForecast(data) {
+  if (!weatherForecastEl) return;
+  const rows = data?.rows || [];
+  weatherForecastEl.innerHTML = "";
+  if (!rows.length) {
+    weatherForecastEl.textContent = t("weatherUnavailable");
+    return;
+  }
+  rows.forEach((row) => {
+    const div = document.createElement("div");
+    div.className = "weather-row";
+    const left = document.createElement("div");
+    left.className = "weather-label";
+    left.textContent = row.label;
+    const right = document.createElement("div");
+    right.className = "weather-meta";
+    const bits = [];
+    if (row.temp != null) bits.push(`${row.temp}°C`);
+    if (row.precip != null) bits.push(`${row.precip}% rain`);
+    if (row.wind != null) bits.push(`${row.wind} km/h`);
+    const distanceLabel =
+      row.distanceAlong != null && Number.isFinite(row.distanceAlong)
+        ? `${Math.round((row.distanceAlong / 1000) * 10) / 10} km`
+        : null;
+    if (distanceLabel) bits.push(distanceLabel);
+    right.textContent = bits.join(" · ");
+    div.append(left, right);
+    weatherForecastEl.appendChild(div);
+  });
+}
+
+function setWeatherExpanded(expanded) {
+  weatherState.expanded = expanded;
+  if (weatherPanel) weatherPanel.classList.toggle("hidden", !expanded);
+}
+
+function findClosestHourly(data, targetMs) {
+  const times = data?.hourly?.time || [];
+  const temps = data?.hourly?.temperature_2m || [];
+  const precip = data?.hourly?.precipitation_probability || [];
+  const wind = data?.hourly?.wind_speed_10m || [];
+  let bestIdx = -1;
+  let bestDiff = Infinity;
+  times.forEach((timeStr, idx) => {
+    const ts = Date.parse(timeStr);
+    if (!Number.isFinite(ts)) return;
+    const diff = Math.abs(ts - targetMs);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestIdx = idx;
+    }
+  });
+  if (bestIdx === -1) return null;
+  return {
+    temp: Number.isFinite(temps[bestIdx]) ? temps[bestIdx] : null,
+    precipProb: Number.isFinite(precip[bestIdx]) ? precip[bestIdx] : null,
+    wind: Number.isFinite(wind[bestIdx]) ? wind[bestIdx] : null,
+  };
+}
+
+async function fetchWeatherForPoint(planItem) {
+  const params = new URLSearchParams({
+    latitude: planItem.coord.lat.toFixed(4),
+    longitude: planItem.coord.lng.toFixed(4),
+    current: "temperature_2m,wind_speed_10m,precipitation",
+    hourly: "temperature_2m,precipitation_probability,wind_speed_10m",
+    forecast_days: "2",
+    timezone: "auto",
+  });
+  const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error("Weather request failed");
+  const data = await res.json();
+  const closest = findClosestHourly(data, planItem.timeMs);
+  const row = {
+    label: formatTimeLabel(planItem.timeMs),
+    timeMs: planItem.timeMs,
+    temp: closest?.temp != null ? Math.round(closest.temp) : null,
+    precip: closest?.precipProb != null ? Math.round(closest.precipProb) : null,
+    wind: closest?.wind != null ? Math.round(closest.wind) : null,
+    distanceAlong: planItem.distanceAlong ?? null,
+  };
+  const summary = data.current
+    ? {
+        temp: data.current.temperature_2m,
+        wind: data.current.wind_speed_10m,
+        precip: data.current.precipitation,
+      }
+    : null;
+  return { row, summary };
+}
+
+function getWeatherPlan(deviceId, hours = 4) {
+  const total = getRouteTotal() || 0;
+  const progress = deviceId ? getDeviceProgress(deviceId) : null;
+  const now = Date.now();
+  if (progress && !progress.offtrack && progress.proj?.distanceAlong != null) {
+    const speedMs = getAverageSpeedForDevice(deviceId);
+    const baseDist = progress.proj.distanceAlong;
+    const plan = [];
+    for (let i = 0; i < hours; i += 1) {
+      const offsetMs = (i + 1) * 60 * 60 * 1000;
+      const delta = speedMs > 0 ? (speedMs * offsetMs) / 1000 : 0;
+      const targetDist = Math.min(total || baseDist, baseDist + delta);
+      const coord = pointAtDistance(targetDist) || progress.proj.point || progress.pos || null;
+      if (!coord) break;
+      plan.push({ timeMs: now + offsetMs, coord, distanceAlong: targetDist });
+    }
+    if (plan.length) return plan;
+  }
+  const center = getRouteCenter();
+  if (!center) return null;
+  return Array.from({ length: hours }, (_, idx) => ({
+    timeMs: now + (idx + 1) * 60 * 60 * 1000,
+    coord: center,
+    distanceAlong: null,
+  }));
+}
+
+async function fetchWeatherSeries(deviceId) {
+  const plan = getWeatherPlan(deviceId);
+  if (!plan || !plan.length) throw new Error("No route to infer location");
+  const results = await Promise.all(plan.map((item) => fetchWeatherForPoint(item)));
+  const summary = results.find((r) => r.summary)?.summary || null;
+  const rows = results.map((r) => r.row);
+  return { summary, rows };
+}
+
+function getWeatherCacheKey(deviceId) {
+  return deviceId != null ? String(deviceId) : "route";
+}
+
+async function refreshWeather(force = false, deviceId = selectedDeviceId) {
+  if (!weatherPanel || weatherState.pending) return;
+  const cacheKey = getWeatherCacheKey(deviceId);
+  const cached = weatherCache.get(cacheKey);
+  if (!force && cached && Date.now() - cached.lastFetch < WEATHER_STALE_MS) {
+    renderWeatherSummary(cached.data);
+    renderWeatherForecast(cached.data);
+    if (weatherUpdatedEl) {
+      weatherUpdatedEl.textContent = new Date(cached.lastFetch).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+    return;
+  }
+  weatherState.pending = true;
+  if (weatherErrorEl) {
+    weatherErrorEl.classList.add("hidden");
+    weatherErrorEl.textContent = "";
+  }
+  if (weatherForecastEl) weatherForecastEl.textContent = t("weatherFetching");
+  try {
+    const data = await fetchWeatherSeries(deviceId);
+    const entry = { data, lastFetch: Date.now() };
+    weatherCache.set(cacheKey, entry);
+    renderWeatherSummary(entry.data);
+    renderWeatherForecast(entry.data);
+    if (weatherUpdatedEl) {
+      weatherUpdatedEl.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+  } catch (err) {
+    console.error(err);
+    if (weatherErrorEl) {
+      weatherErrorEl.textContent = t("weatherUnavailable");
+      weatherErrorEl.classList.remove("hidden");
+    }
+  } finally {
+    weatherState.pending = false;
+  }
+}
+
+function setupWeatherWidget() {
+  weatherToggle = document.getElementById("weather-toggle");
+  weatherPanel = document.getElementById("weather-panel");
+  weatherForecastEl = document.getElementById("weather-forecast");
+  weatherErrorEl = document.getElementById("weather-error");
+  weatherSummaryEl = document.getElementById("weather-summary");
+  weatherUpdatedEl = document.getElementById("weather-updated");
+  const titleEl = document.getElementById("weather-panel-title");
+  if (titleEl) titleEl.textContent = t("weatherTitle");
+  if (weatherSummaryEl) weatherSummaryEl.textContent = "";
+  setWeatherExpanded(false);
+  if (weatherToggle) {
+    weatherToggle.addEventListener("click", () => {
+      const next = !weatherState.expanded;
+      setWeatherExpanded(next);
+      if (next) refreshWeather();
+    });
+  }
 }
 
 async function loadRoute() {
@@ -335,15 +574,18 @@ async function loadRoute() {
     clearRoute();
     buildRouteProfile(segments);
     renderRoute(segments, "#0c8bc7");
+    setElevationProfile(getRouteElevationProfile());
     const mappedWps = mapWaypoints(waypoints || []);
     routeWaypoints = mappedWps;
     progressEvents.clear();
+    weatherCache.clear();
     rebuildDistanceTicks();
     setRouteWaypoints(mappedWps);
     renderWaypoints();
     rebuildKmMarkers();
     segments.forEach((seg) => seg.forEach((pt) => extendBounds(pt)));
     fitToData();
+    refreshWeather(true).catch((err) => console.error(err));
   } catch (err) {
     console.error(err);
     setStatus(`Track error: ${trackFile}`, true);
@@ -357,9 +599,14 @@ function selectDevice(deviceId, { focus = false } = {}) {
   renderToggles();
   const pos = lastPositions.get(deviceId);
   if (pos) updateMarker(pos);
+  const prog = getDeviceProgress(deviceId);
+  if (prog?.proj?.distanceAlong != null) {
+    setElevationProgress(prog.proj.distanceAlong);
+  }
   if (focus) {
     // focus handled within visualization renderLegend
   }
+  refreshWeather(true, deviceId).catch((err) => console.error(err));
 }
 
 async function refreshDevices() {
@@ -388,7 +635,7 @@ async function fetchRecentHistoryForDevice(deviceId) {
   if (!config?.traccarUrl || !config?.token) return;
   if (!filterDevice(deviceId)) return;
   const now = new Date();
-  const from = new Date(now.getTime() - HISTORY_WINDOW_MS);
+  const from = new Date(now.getTime() - getHistoryRetentionMs());
   const data = await fetchRecentHistory(config, deviceId, from, now);
   const startMs = config?.startTime ? Date.parse(config.startTime) : null;
   const samples = data
@@ -415,7 +662,7 @@ function updatePositionHistory(deviceId, coords, timeMs) {
   if (startMs && timeMs < startMs) return;
   const list = positionsHistory.get(deviceId) || [];
   list.push({ t: timeMs, lat: coords[0], lng: coords[1] });
-  const cutoff = Date.now() - HISTORY_WINDOW_MS;
+  const cutoff = Date.now() - getHistoryRetentionMs();
   while (list.length && list[0].t < cutoff) list.shift();
   positionsHistory.set(deviceId, list);
 }
@@ -616,6 +863,7 @@ async function bootstrap() {
   initContextMenu();
   await loadConfig();
   initLangSelector();
+  setupWeatherWidget();
   initDownloadButton();
   await loadTranslations();
   await loadRoute();

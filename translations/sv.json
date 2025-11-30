@@ -1,6 +1,8 @@
 {
   "eta": "ETA",
   "etaHere": "ETA här: {eta}",
+  "etaMargin": "±{minutes} min",
+  "etaMarginSubMinute": "±<1 min",
   "passed": "passerat",
   "offtrack": "deltagare ej på rutten",
   "unknown": "okänt",

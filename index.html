@@ -11,7 +11,24 @@
   <header class="topbar">
     <div id="title" class="title">Live Tracker</div>
     <div class="topbar-actions">
-      <button id="download-gpx" class="topbar-btn" type="button">Download GPX</button>
+      <div id="weather-widget" class="weather-widget">
+        <button id="weather-toggle" class="topbar-btn weather-toggle" type="button">
+          <span id="weather-summary" class="weather-summary"></span>
+        </button>
+        <div id="weather-panel" class="weather-panel hidden">
+          <div class="weather-panel-header">
+            <span id="weather-panel-title">Weather</span>
+            <span id="weather-updated" class="weather-updated"></span>
+          </div>
+          <div id="weather-forecast" class="weather-forecast"></div>
+          <div id="weather-error" class="weather-error hidden"></div>
+        </div>
+      </div>
+      <button id="download-gpx" class="topbar-btn icon-btn" type="button" aria-label="Download GPX" title="Download GPX">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v9.586l2.293-2.292a1 1 0 0 1 1.414 1.414l-4 3.999a1 1 0 0 1-1.414 0l-4-4a1 1 0 0 1 1.414-1.414L11 13.586V4a1 1 0 0 1 1-1Zm-7 14a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Z"/>
+        </svg>
+      </button>
       <select id="lang-select" class="lang-select">
         <option value="en">🇬🇧</option>
         <option value="nl">🇳🇱</option>

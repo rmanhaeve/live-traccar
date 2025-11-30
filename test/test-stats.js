@@ -88,4 +88,23 @@ const eta = computeEta(deviceId, progress.proj.distanceAlong + 50, {
 assert.equal(eta.status, "eta");
 assert.ok(eta.arrival instanceof Date);
 
+// With varied speeds we should expose a confidence interval range
+const variedHistory = new Map([[deviceId, [
+  { t: 0, lat: 0, lng: 0 },
+  { t: 8000, lat: 0, lng: 0.001 },
+  { t: 16000, lat: 0, lng: 0.0025 },
+  { t: 24000, lat: 0, lng: 0.003 },
+]]]);
+const etaWithInterval = computeEta(deviceId, progress.proj.distanceAlong + 50, {
+  lastPositions,
+  lastProjection: new Map(),
+  positionsHistory: variedHistory,
+  activeStartTimes,
+});
+assert.equal(etaWithInterval.status, "eta");
+assert.ok(etaWithInterval.arrival instanceof Date);
+assert.ok(etaWithInterval.interval?.low instanceof Date);
+assert.ok(etaWithInterval.interval?.high instanceof Date);
+assert(etaWithInterval.interval.low < etaWithInterval.interval.high);
+
 console.log("stats tests passed");

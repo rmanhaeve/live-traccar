@@ -13,7 +13,3 @@ export function distanceMeters(a, b) {
   const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLon * sinDLon;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
-
-export function interpolatePoint(a, b, ratio) {
-  return [a[0] + (b[0] - a[0]) * ratio, a[1] + (b[1] - a[1]) * ratio];
-}

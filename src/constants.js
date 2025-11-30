@@ -10,11 +10,14 @@ export const DEFAULT_CONFIG = {
   debugSpeedKph: 60,
   showKmMarkers: true,
   showWaypoints: true,
+  historyHours: 24,
 };
 
 export const DEFAULT_TEXTS = {
   eta: "ETA",
   etaHere: "ETA here: {eta}",
+  etaMargin: "±{minutes} min",
+  etaMarginSubMinute: "±<1 min",
   passed: "passed",
   offtrack: "participant not on track",
   unknown: "unknown",
@@ -38,6 +41,11 @@ export const DEFAULT_TEXTS = {
   you: "You",
   toggleYou: "Show your location",
   downloadGpx: "Download GPX",
+  weatherTitle: "Weather",
+  weatherFetching: "Loading weather…",
+  weatherUnavailable: "Weather unavailable",
+  weatherWind: "Wind",
+  weatherPrecip: "Rain",
 };
 
 export const TRANSLATIONS_MAP = {

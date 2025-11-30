@@ -1,9 +1,10 @@
-import { distanceMeters, interpolatePoint } from "./geo.js";
+import { distanceMeters } from "./geo.js";
 
 let routePoints = [];
 let routeDistances = [];
 let routeAvgLat = 0;
 let routeTotal = 0;
+let routeElevations = [];
 
 export function parseGpx(xmlText) {
   const xml = new DOMParser().parseFromString(xmlText, "application/xml");
@@ -22,6 +23,11 @@ export function parseGpx(xmlText) {
       const pts = Array.from(seg.getElementsByTagName("trkpt")).map((pt) => [
         Number(pt.getAttribute("lat")),
         Number(pt.getAttribute("lon")),
+        Number(
+          (typeof pt.querySelector === "function"
+            ? pt.querySelector("ele")
+            : pt.getElementsByTagName && pt.getElementsByTagName("ele")[0])?.textContent
+        ),
       ]);
       if (pts.length) segments.push(pts);
     });
@@ -44,17 +50,22 @@ export function parseGpx(xmlText) {
 export function buildRouteProfile(segments) {
   routePoints = [];
   routeDistances = [];
+  routeElevations = [];
   routeAvgLat = 0;
   routeTotal = 0;
   segments.forEach((seg) => {
-    seg.forEach((pt) => routePoints.push({ lat: pt[0], lng: pt[1] }));
+    seg.forEach((pt) => routePoints.push({ lat: pt[0], lng: pt[1], ele: Number.isFinite(pt[2]) ? pt[2] : null }));
   });
   if (!routePoints.length) return;
   routeAvgLat = routePoints.reduce((sum, p) => sum + p.lat, 0) / routePoints.length;
   routeDistances = new Array(routePoints.length).fill(0);
+  routeElevations = new Array(routePoints.length).fill(null);
   for (let i = 1; i < routePoints.length; i += 1) {
     routeDistances[i] =
       routeDistances[i - 1] + distanceMeters([routePoints[i - 1].lat, routePoints[i - 1].lng], [routePoints[i].lat, routePoints[i].lng]);
+  }
+  for (let i = 0; i < routePoints.length; i += 1) {
+    routeElevations[i] = routePoints[i].ele;
   }
   routeTotal = routeDistances[routeDistances.length - 1] || 0;
   const rad = Math.PI / 180;
@@ -196,4 +207,8 @@ export function getRouteTotal() {
 
 export function getRouteAvgLat() {
   return routeAvgLat;
+}
+
+export function getRouteElevationProfile() {
+  return { distances: routeDistances, elevations: routeElevations };
 }

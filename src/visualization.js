@@ -53,10 +53,231 @@ const state = {
   helpPopupEl: null,
   longPressTimer: null,
   longPressPos: null,
+  elevationProfile: null,
+  elevationProgressDistance: null,
+  elevationEls: null,
 };
 
 function nextColor(idx) {
   return colors[idx % colors.length];
+}
+
+function ensureElevationBar() {
+  if (state.elevationEls) return state.elevationEls;
+  const container = document.createElement("div");
+  container.className = "elevation-bar collapsed";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "elevation-toggle";
+  toggle.textContent = "▲";
+  const content = document.createElement("div");
+  content.className = "elevation-content";
+  const chart = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  chart.setAttribute("viewBox", "0 0 100 50");
+  chart.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  chart.classList.add("elevation-chart");
+  const gridYGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  gridYGroup.classList.add("elevation-grid");
+  const gridXGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  gridXGroup.classList.add("elevation-grid");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.classList.add("elevation-path");
+  const progressDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  progressDot.classList.add("elevation-progress-dot");
+  progressDot.setAttribute("r", "3.2");
+  const progressLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  progressLabel.classList.add("elevation-progress-label");
+  chart.append(gridYGroup, gridXGroup, path, progressDot, progressLabel);
+  const empty = document.createElement("div");
+  empty.className = "elevation-empty";
+  content.append(chart, empty);
+  container.append(toggle, content);
+  document.body.appendChild(container);
+  toggle.addEventListener("click", () => {
+    const collapsed = container.classList.toggle("collapsed");
+    toggle.textContent = collapsed ? "▲" : "▼";
+  });
+  state.elevationEls = { container, toggle, chart, path, progressDot, progressLabel, empty, gridXGroup, gridYGroup };
+  window.addEventListener("resize", () => renderElevationChart());
+  return state.elevationEls;
+}
+
+function chooseTickStep(range, targetCount = 4) {
+  if (!Number.isFinite(range) || range <= 0) return null;
+  const raw = range / targetCount;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const candidates = [1, 2, 5, 10];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const step = candidates[i] * pow;
+    if (raw <= step) return step;
+  }
+  return candidates[candidates.length - 1] * pow;
+}
+
+function clearGroup(g) {
+  if (!g) return;
+  while (g.firstChild) g.removeChild(g.firstChild);
+}
+
+function renderElevationChart() {
+  const els = ensureElevationBar();
+  const profile = state.elevationProfile;
+  if (!profile || !profile.distances?.length || !profile.elevations?.length) {
+    els.empty.textContent = "No elevation data";
+    els.chart.classList.add("hidden");
+    return;
+  }
+  const distances = profile.distances;
+  const elevations = profile.elevations;
+  const total = distances[distances.length - 1] || 0;
+  const finiteElevs = elevations.filter((e) => Number.isFinite(e));
+  if (!finiteElevs.length || total <= 0) {
+    els.empty.textContent = "No elevation data";
+    els.chart.classList.add("hidden");
+    return;
+  }
+  els.empty.textContent = "";
+  els.chart.classList.remove("hidden");
+  const minEle = Math.min(...finiteElevs);
+  const maxEle = Math.max(...finiteElevs);
+  const w = Math.max(els.chart.clientWidth || 0, 300);
+  const h = Math.max(els.chart.clientHeight || 0, 120);
+  els.chart.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  const pad = Math.min(w, h) * 0.05;
+  const spanEle = Math.max(1, maxEle - minEle);
+  clearGroup(els.gridXGroup);
+  clearGroup(els.gridYGroup);
+  // vertical ticks for distance
+  const totalKm = total / 1000;
+  const stepKm = chooseTickStep(totalKm, 8);
+  if (stepKm) {
+    const decimals = stepKm < 1 ? (stepKm < 0.1 ? 2 : 1) : 0;
+    for (let km = 0; km <= totalKm + stepKm * 0.5; km += stepKm) {
+      const dist = km * 1000;
+      const x = pad + ((dist / total) * (w - pad * 2));
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", String(x));
+      line.setAttribute("x2", String(x));
+      line.setAttribute("y1", "0");
+      line.setAttribute("y2", String(h));
+      line.classList.add("elevation-grid-line");
+      els.gridXGroup.appendChild(line);
+      const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      label.setAttribute("x", String(x + 0.5));
+      label.setAttribute("y", String(h - 1));
+      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("class", "elevation-grid-label");
+      label.textContent = `${km.toFixed(decimals)} km`;
+      els.gridXGroup.appendChild(label);
+    }
+  }
+  // horizontal ticks for elevation
+  const stepEle = chooseTickStep(spanEle, 4);
+  if (stepEle) {
+    const start = Math.ceil(minEle / stepEle) * stepEle;
+    for (let v = start; v <= maxEle + stepEle * 0.5; v += stepEle) {
+      const y = h - pad - (((v - minEle) / spanEle) * (h - pad * 2));
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", "0");
+      line.setAttribute("x2", String(w));
+      line.setAttribute("y1", String(y));
+      line.setAttribute("y2", String(y));
+      line.classList.add("elevation-grid-line");
+      els.gridYGroup.appendChild(line);
+      const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      label.setAttribute("x", "1");
+      label.setAttribute("y", String(y - 1));
+      label.setAttribute("class", "elevation-grid-label");
+      label.textContent = `${Math.round(v)} m`;
+      els.gridYGroup.appendChild(label);
+    }
+  }
+  const points = [];
+  for (let i = 0; i < distances.length; i += 1) {
+    const d = distances[i];
+    const ele = elevations[i];
+    if (!Number.isFinite(d) || !Number.isFinite(ele)) continue;
+    const x = pad + ((d / total) * (w - pad * 2));
+    const y = h - pad - (((ele - minEle) / spanEle) * (h - pad * 2));
+    points.push([x, y]);
+  }
+  if (!points.length) {
+    els.empty.textContent = "No elevation data";
+    els.chart.classList.add("hidden");
+    return;
+  }
+  let dAttr = `M ${points[0][0]} ${points[0][1]}`;
+  for (let i = 1; i < points.length; i += 1) {
+    dAttr += ` L ${points[i][0]} ${points[i][1]}`;
+  }
+  els.path.setAttribute("d", dAttr);
+  els.path.setAttribute("fill", "none");
+  els.path.setAttribute("stroke", "currentColor");
+  els.path.setAttribute("stroke-width", "1.5");
+  renderElevationProgress();
+}
+
+function renderElevationProgress() {
+  const els = ensureElevationBar();
+  const profile = state.elevationProfile;
+  if (!profile || !profile.distances?.length) {
+    els.progressDot.setAttribute("visibility", "hidden");
+    if (els.progressLabel) els.progressLabel.setAttribute("visibility", "hidden");
+    return;
+  }
+  const total = profile.distances[profile.distances.length - 1] || 0;
+  if (!total || !Number.isFinite(state.elevationProgressDistance)) {
+    els.progressDot.setAttribute("visibility", "hidden");
+    if (els.progressLabel) els.progressLabel.setAttribute("visibility", "hidden");
+    return;
+  }
+  const vb = els.chart.viewBox.baseVal;
+  const w = vb?.width || 100;
+  const h = vb?.height || 50;
+  const pad = Math.min(w, h) * 0.05;
+  const x = pad + ((Math.max(0, Math.min(state.elevationProgressDistance, total)) / total) * (w - pad * 2));
+  // find elevation at distance
+  const distances = profile.distances;
+  const elevations = profile.elevations;
+  const target = Math.max(0, Math.min(state.elevationProgressDistance, total));
+  let yVal = null;
+  for (let i = 1; i < distances.length; i += 1) {
+    const d0 = distances[i - 1];
+    const d1 = distances[i];
+    if (target >= d0 && target <= d1 && Number.isFinite(elevations[i - 1]) && Number.isFinite(elevations[i])) {
+      const ratio = d1 === d0 ? 0 : (target - d0) / (d1 - d0);
+      yVal = elevations[i - 1] + (elevations[i] - elevations[i - 1]) * ratio;
+      break;
+    }
+  }
+  if (!Number.isFinite(yVal)) {
+    els.progressDot.setAttribute("visibility", "hidden");
+    return;
+  }
+  const minEle = Math.min(...elevations.filter((e) => Number.isFinite(e)));
+  const maxEle = Math.max(...elevations.filter((e) => Number.isFinite(e)));
+  const spanEle = Math.max(1, maxEle - minEle);
+  const y = h - pad - (((yVal - minEle) / spanEle) * (h - pad * 2));
+  els.progressDot.setAttribute("cx", String(x));
+  els.progressDot.setAttribute("cy", String(y));
+  els.progressDot.setAttribute("visibility", "visible");
+  if (els.progressLabel) {
+    els.progressLabel.setAttribute("x", String(x + 4));
+    els.progressLabel.setAttribute("y", String(Math.max(8, y - 4)));
+    els.progressLabel.setAttribute("text-anchor", "start");
+    els.progressLabel.textContent = `${Math.round(yVal)} m`;
+    els.progressLabel.setAttribute("visibility", "visible");
+  }
+}
+
+export function setElevationProfile(profile) {
+  state.elevationProfile = profile;
+  renderElevationChart();
+}
+
+export function setElevationProgress(distanceAlong) {
+  state.elevationProgressDistance = distanceAlong;
+  renderElevationProgress();
 }
 
 export function setupVisualization(deps) {
@@ -79,6 +300,38 @@ export function setupVisualization(deps) {
   state.devices = deps.devices;
   state.lastSeen = deps.lastSeen;
   state.lastPositions = deps.lastPositions;
+}
+
+function formatEtaIntervalText(eta) {
+  if (!eta || !eta.arrival || !eta.interval) return "";
+  const arrival = eta.arrival instanceof Date ? eta.arrival : new Date(eta.arrival);
+  const low = eta.interval.low instanceof Date ? eta.interval.low : new Date(eta.interval.low);
+  const high = eta.interval.high instanceof Date ? eta.interval.high : new Date(eta.interval.high);
+  if (
+    Number.isNaN(arrival.getTime()) ||
+    Number.isNaN(low.getTime()) ||
+    Number.isNaN(high.getTime())
+  ) {
+    return "";
+  }
+  const lowerSpread = Math.max(0, arrival.getTime() - low.getTime());
+  const upperSpread = Math.max(0, high.getTime() - arrival.getTime());
+  const spreadMs = Math.max(lowerSpread, upperSpread);
+  if (!Number.isFinite(spreadMs) || spreadMs <= 0) return "";
+  const minutes = Math.round(spreadMs / 60000);
+  if (minutes <= 0) return state.t("etaMarginSubMinute");
+  return state.t("etaMargin", { minutes });
+}
+
+function formatEtaText(eta) {
+  if (eta?.status === "eta" && eta.arrival) {
+    const base = state.formatDateTimeFull(eta.arrival);
+    const intervalText = formatEtaIntervalText(eta);
+    return intervalText ? `${base} (${intervalText})` : base;
+  }
+  if (eta?.status === "passed") return state.t("passed");
+  if (eta?.status === "offtrack") return state.t("offtrack");
+  return state.t("unknown");
 }
 
 function hideHistoryOverlay() {
@@ -114,23 +367,41 @@ function showHistoryOverlay(deviceId) {
   const addSection = (label, items, formatter) => {
     const block = document.createElement("div");
     block.className = "history-section";
+    const headerRow = document.createElement("button");
+    headerRow.type = "button";
+    headerRow.className = "history-section-header";
     const h = document.createElement("div");
     h.className = "history-label";
     h.textContent = label;
-    block.appendChild(h);
+    const toggle = document.createElement("span");
+    toggle.className = "history-toggle";
+    headerRow.append(h, toggle);
+    block.appendChild(headerRow);
+    const content = document.createElement("div");
+    content.className = "history-content";
     if (!items || !items.length) {
       const empty = document.createElement("div");
       empty.className = "history-empty";
       empty.textContent = state.t("historyNone");
-      block.appendChild(empty);
+      content.appendChild(empty);
     } else {
       items.forEach((it) => {
         const row = document.createElement("div");
         row.className = "history-row";
         row.textContent = formatter(it);
-        block.appendChild(row);
+        content.appendChild(row);
       });
     }
+    block.appendChild(content);
+    const setCollapsed = (collapsed) => {
+      block.classList.toggle("collapsed", collapsed);
+      toggle.classList.toggle("collapsed", collapsed);
+    };
+    headerRow.addEventListener("click", () => {
+      setCollapsed(!block.classList.contains("collapsed"));
+    });
+    const initialCollapsed = Array.isArray(items) && items.length > 10;
+    setCollapsed(initialCollapsed);
     sections.appendChild(block);
   };
   addSection(
@@ -214,6 +485,9 @@ export function clearRoute() {
   state.kmMarkerGroup?.clearLayers();
   state.routeWaypoints = [];
   state.trackData.length = 0;
+  state.elevationProfile = null;
+  state.elevationProgressDistance = null;
+  renderElevationChart();
 }
 
 export function renderRoute(segments, color = nextColor(state.trackData.length)) {
@@ -329,14 +603,7 @@ export function renderWaypoints() {
     const eta = state.computeEta && state.getSelectedDeviceId()
       ? state.computeEta(state.getSelectedDeviceId(), wp.distanceAlong)
       : null;
-    const etaText =
-      eta?.status === "eta" && eta.arrival
-        ? state.formatDateTimeFull(eta.arrival)
-        : eta?.status === "passed"
-          ? state.t("passed")
-          : eta?.status === "offtrack"
-            ? state.t("offtrack")
-            : state.t("unknown");
+    const etaText = formatEtaText(eta);
     marker.on("click", () => {
       const idx = state.routeWaypoints.indexOf(wp);
       const next = idx >= 0 && idx < state.routeWaypoints.length - 1 ? state.routeWaypoints[idx + 1] : null;
@@ -390,21 +657,23 @@ export function renderLegend() {
     dot.className = `legend-dot ${state.isStale(device.id) ? "stale" : "live"}`;
     const label = document.createElement("span");
     const name = device.name || `Device ${device.id}`;
-    const ts = state.formatTimeLabel(state.lastSeen.get(device.id));
     const prog = state.getDeviceProgress(device.id);
     const offRoute = !prog || prog.offtrack;
     const endpoint = prog?.endpoint;
     const km = !offRoute && prog ? `${Math.round((prog.proj.distanceAlong / 1000) * 10) / 10} km` : null;
-    const suffix = offRoute
-      ? ` • ${state.t("offrouteLabel")}`
+    const speedMs = state.getAverageSpeedMs ? state.getAverageSpeedMs(device.id) : 0;
+    const speedText = speedMs > 0 ? `${Math.round(speedMs * 3.6 * 10) / 10} km/h` : null;
+    const statusText = offRoute
+      ? state.t("offrouteLabel")
       : endpoint === "start"
-        ? ` • ${state.t("startLabel")}`
+        ? state.t("startLabel")
         : endpoint === "finish"
-          ? ` • ${state.t("finishLabel")}`
-          : km
-            ? ` • ${km}`
-            : "";
-    label.textContent = ts ? `${name} (${ts})${suffix}` : `${name}${suffix}`;
+          ? state.t("finishLabel")
+          : km;
+    const parts = [name];
+    if (speedText) parts.push(`• ${speedText}`);
+    if (statusText) parts.push(`• ${statusText}`);
+    label.textContent = parts.join(" ");
     btn.append(dot, label);
     btn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -554,6 +823,9 @@ export function updateMarker(position) {
   } else {
     marker.bindPopup(content);
   }
+  if (state.getSelectedDeviceId && state.getSelectedDeviceId() === position.deviceId && prog?.proj?.distanceAlong != null) {
+    setElevationProgress(prog.proj.distanceAlong);
+  }
   marker.off("popupopen");
   marker.on("popupopen", () => {
     attachHistoryButton(marker, position.deviceId);
@@ -646,14 +918,7 @@ function showContextMenu(latlng, containerPoint) {
       const eta = state.computeEta ? state.computeEta(state.getSelectedDeviceId(), targetProj.distanceAlong) : null;
       const info = document.createElement("div");
       info.className = "context-info";
-      const etaText =
-        eta?.status === "eta" && eta.arrival
-          ? state.formatDateTimeFull(eta.arrival)
-          : eta?.status === "passed"
-            ? state.t("passed")
-            : eta?.status === "offtrack"
-              ? state.t("offtrack")
-              : state.t("unknown");
+      const etaText = formatEtaText(eta);
       info.textContent = state.t("etaHere", { eta: etaText });
       state.contextMenuEl.appendChild(info);
     }
