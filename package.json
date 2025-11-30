@@ -3,9 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "lint": "echo \"no lint configured\""
+    "lint": "echo \"no lint configured\"",
+    "test": "node test/test-matcher.js"
   },
   "dependencies": {
-    "leaflet": "^1.9.4"
+    "leaflet": "^1.9.4",
+    "xmldom": "^0.6.0"
   }
 }

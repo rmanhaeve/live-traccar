@@ -29,6 +29,7 @@
   const lastSeen = new Map();
   const lastPositions = new Map();
   const positionsHistory = new Map();
+  const lastProjection = new Map();
   const activeStartTimes = new Map();
   let viewerMarker;
   let viewerWatchId;
@@ -334,6 +335,8 @@
     }
   }
 
+  // Robust matching: precompute XY coords and segment angles, and a matcher function that
+  // uses global search + local window + continuity + heading.
   function buildRouteProfile(segments) {
     routePoints = [];
     routeDistances = [];
@@ -349,49 +352,89 @@
         routeDistances[i - 1] + distanceMeters([routePoints[i - 1].lat, routePoints[i - 1].lng], [routePoints[i].lat, routePoints[i].lng]);
     }
     routeTotal = routeDistances[routeDistances.length - 1] || 0;
+    // precompute projected XY and segment angles for faster matching
+    const rad = Math.PI / 180;
+    const R = 6371000;
+    const refLat = routeAvgLat || (routePoints[0] && routePoints[0].lat) || 0;
+    for (let i = 0; i < routePoints.length; i += 1) {
+      const p = routePoints[i];
+      p._x = p.lng * rad * Math.cos(refLat * rad) * R;
+      p._y = p.lat * rad * R;
+    }
+    for (let i = 0; i < routePoints.length - 1; i += 1) {
+      const a = routePoints[i];
+      const b = routePoints[i + 1];
+      const dx = b._x - a._x;
+      const dy = b._y - a._y;
+      a._segAngle = Math.atan2(dy, dx);
+      a._segLen2 = dx * dx + dy * dy;
+    }
+  }
+
+  function matchPositionToRoute(latlng, opts = {}) {
+    // opts: { hintDistanceAlong, headingDeg }
+    if (!routePoints.length) return null;
+    const refLat = routeAvgLat || latlng.lat;
+    const rad = Math.PI / 180;
+    const R = 6371000;
+    const tx = latlng.lng * rad * Math.cos(refLat * rad) * R;
+    const ty = latlng.lat * rad * R;
+    const hint = opts.hintDistanceAlong;
+    const wantHeading = Number.isFinite(opts.headingDeg);
+    const headingRad = wantHeading ? (opts.headingDeg * Math.PI) / 180 : null;
+
+    // global scan to find a few best candidates
+    const candidates = [];
+    for (let i = 0; i < routePoints.length - 1; i += 1) {
+      const a = routePoints[i];
+      const b = routePoints[i + 1];
+      const seg = { x: b._x - a._x, y: b._y - a._y };
+      const segLen2 = a._segLen2 || (seg.x * seg.x + seg.y * seg.y);
+      if (segLen2 === 0) continue;
+      const apx = tx - a._x;
+      const apy = ty - a._y;
+      let t = (apx * seg.x + apy * seg.y) / segLen2;
+      t = Math.max(0, Math.min(1, t));
+      const px = a._x + seg.x * t;
+      const py = a._y + seg.y * t;
+      const d2 = (px - tx) * (px - tx) + (py - ty) * (py - ty);
+      const segDist = (routeDistances[i] || 0) + Math.sqrt(segLen2) * t;
+      let angleScore = 0;
+      if (wantHeading) {
+        const segAngle = a._segAngle;
+        let diff = Math.abs(segAngle - headingRad);
+        diff = Math.min(diff, Math.abs(2 * Math.PI - diff));
+        angleScore = Math.cos(diff);
+      }
+      // score uses distance (preferred) and angle if available
+      const score = (1 / (Math.sqrt(d2) + 1e-3)) * 0.8 + (wantHeading ? angleScore * 0.2 : 0);
+      candidates.push({ i, t, d2, segDist, score, point: { lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t } });
+    }
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => a.d2 - b.d2);
+
+    // pick best candidate but consider hint: prefer candidates near hint
+    let best = candidates[0];
+    if (hint != null) {
+      for (let j = 0; j < Math.min(candidates.length, 10); j += 1) {
+        const c = candidates[j];
+        if (Math.abs(c.segDist - hint) < 200) {
+          best = c;
+          break;
+        }
+      }
+    }
+
+    const offtrack = Math.sqrt(best.d2) > 200;
+    return { dist2: best.d2, distanceAlong: best.segDist, point: best.point, offtrack };
   }
 
   function projectOnRoute(latlng) {
-    if (!routePoints.length) return null;
-    const refLat = routeAvgLat || latlng.lat;
-    const toXY = (p) => {
-      const rad = Math.PI / 180;
-      const R = 6371000;
-      return {
-        x: p.lng * rad * Math.cos(refLat * rad) * R,
-        y: p.lat * rad * R,
-      };
-    };
-    const target = toXY(latlng);
-    let best = { dist2: Infinity, distanceAlong: 0, point: latlng };
-    for (let i = 1; i < routePoints.length; i += 1) {
-      const a = routePoints[i - 1];
-      const b = routePoints[i];
-      const ax = toXY(a);
-      const bx = toXY(b);
-      const seg = { x: bx.x - ax.x, y: bx.y - ax.y };
-      const segLen2 = seg.x * seg.x + seg.y * seg.y;
-      if (segLen2 === 0) continue;
-      const ap = { x: target.x - ax.x, y: target.y - ax.y };
-      let t = (ap.x * seg.x + ap.y * seg.y) / segLen2;
-      t = Math.max(0, Math.min(1, t));
-      const proj = { x: ax.x + seg.x * t, y: ax.y + seg.y * t };
-      const d2 = (proj.x - target.x) * (proj.x - target.x) + (proj.y - target.y) * (proj.y - target.y);
-      if (d2 < best.dist2) {
-        const segDist = distanceMeters([a.lat, a.lng], [b.lat, b.lng]);
-        best = {
-          dist2: d2,
-          distanceAlong: routeDistances[i - 1] + segDist * t,
-          point: {
-            lat: a.lat + (b.lat - a.lat) * t,
-            lng: a.lng + (b.lng - a.lng) * t,
-          },
-        };
-      }
-    }
-    if (!Number.isFinite(best.dist2)) return null;
-    const offtrack = Math.sqrt(best.dist2) > 200;
-    return { ...best, offtrack };
+    return matchPositionToRoute(latlng, {});
+  }
+
+  function projectOnRouteWithHint(latlng, hintDistanceAlong, headingDeg = null) {
+    return matchPositionToRoute(latlng, { hintDistanceAlong, headingDeg });
   }
 
   function mapWaypoints(rawWaypoints) {
@@ -668,8 +711,8 @@
       color: stale ? "#6b7280" : "#0c8bc7",
       fillColor: stale ? "#9ca3af" : "#0c8bc7",
     });
-    const speed =
-      position.speed != null ? ` • ${Math.round(position.speed * 1.852 * 10) / 10} km/h` : "";
+    const avgMs = getAverageSpeedMs(position.deviceId);
+    const speed = avgMs ? ` • ${Math.round(avgMs * 3.6 * 10) / 10} km/h` : "";
     const content = `${name}${speed}<br><span class="muted">${formatDateTimeFull(time) || ""}</span>`;
     const popup = marker.getPopup();
     if (popup) {
@@ -1076,10 +1119,15 @@
   function getDeviceProgress(deviceId) {
     const pos = lastPositions.get(deviceId);
     if (!pos) return null;
-    const proj = projectOnRoute({ lat: pos.latitude, lng: pos.longitude });
+    const last = lastProjection.get(deviceId);
+    const hint = last?.distanceAlong;
+    const heading = getRecentHeading(deviceId);
+    const proj = projectOnRouteWithHint({ lat: pos.latitude, lng: pos.longitude }, hint, heading);
     if (!proj) return null;
     const offtrack = Boolean(proj.offtrack);
     const speedMs = getAverageSpeedMs(deviceId);
+    // store last projection for continuity
+    lastProjection.set(deviceId, { distanceAlong: proj.distanceAlong, t: Date.now() });
     return { proj, speedMs, pos, offtrack };
   }
 
@@ -1135,8 +1183,7 @@
     const samples =
       filtered.length >= 2 ? filtered : filtered.length ? filtered : hist.length ? hist : null;
     if (!samples || samples.length < 2) {
-      const pos = lastPositions.get(deviceId);
-      return pos?.speed != null ? pos.speed * 0.514444 : 0;
+      return 0;
     }
     let dist = 0;
     let startT = samples[0].t;
@@ -1146,16 +1193,52 @@
     }
     const span = (endT || 0) - (startT || 0);
     if (span <= 0) {
-      const pos = lastPositions.get(deviceId);
-      return pos?.speed != null ? pos.speed * 0.514444 : 0;
+      return 0;
     }
     return dist / (span / 1000);
   }
 
+  function getRecentHeading(deviceId, points = 5) {
+    const hist = positionsHistory.get(deviceId) || [];
+    if (!hist.length) return null;
+    // use last N points to compute heading (bearing) in degrees (0-360)
+    const n = Math.min(points, hist.length);
+    const a = hist[hist.length - n];
+    const b = hist[hist.length - 1];
+    if (!a || !b || a.lat == null || a.lng == null || b.lat == null || b.lng == null) return null;
+    const y = Math.sin(toRad(b.lng - a.lng)) * Math.cos(toRad(b.lat));
+    const x = Math.cos(toRad(a.lat)) * Math.sin(toRad(b.lat)) - Math.sin(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.cos(toRad(b.lng - a.lng));
+    let brng = (Math.atan2(y, x) * 180) / Math.PI;
+    brng = (brng + 360) % 360;
+    return brng;
+  }
+
   function renderLegend() {
+    // expose debug info function
+    window.__getDebugInfo = function() {
+      const devicesInfo = Array.from(devices.keys()).map((id) => {
+        const pos = lastPositions.get(id) || null;
+        const proj = lastProjection.get(id) || null;
+        const hist = positionsHistory.get(id) || [];
+        const heading = getRecentHeading(id);
+        const speedMs = getAverageSpeedMs(id);
+        return { id, pos, proj, heading, speedMs, historySamples: hist.length };
+      });
+      return { ts: new Date().toISOString(), devices: devicesInfo, routePoints: routePoints.length };
+    };
+
     const container = ensureLegend();
     if (!container) return;
     container.innerHTML = "";
+    // debug button
+    const dbgWrap = document.createElement('div');
+    dbgWrap.className = 'legend-item';
+    const dbgBtn = document.createElement('button');
+    dbgBtn.className = 'legend-btn';
+    dbgBtn.textContent = 'Debug';
+    dbgBtn.addEventListener('click', () => window.open('/debug.html', '_blank'));
+    dbgWrap.appendChild(dbgBtn);
+    container.appendChild(dbgWrap);
     const deviceEntries = Array.from(devices.values()).filter((d) => filterDevice(d.id));
     deviceEntries.forEach((device) => {
       const item = document.createElement("div");
