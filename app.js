@@ -24,7 +24,7 @@ import {
   markActiveOnRoute,
 } from "./src/stats.js";
 import { fetchDevices, fetchPositions, fetchRecentHistory } from "./src/traccar.js";
-import { buildDebugPositions, installDebugInfoHook } from "./src/debug.js";
+import { installDebugInfoHook } from "./src/debug.js";
 import {
   setupVisualization,
   initMap,
@@ -337,7 +337,9 @@ async function refreshDevices() {
     list.push(
       { id: 10001, name: "Debug Rider 1" },
       { id: 10002, name: "Debug Rider 2" },
-      { id: 10003, name: "Debug Offroute" }
+      { id: 10003, name: "Debug Rider 3" },
+      { id: 10004, name: "Debug Rider 4" },
+      { id: 10005, name: "Debug Rider 5" }
     );
   }
   devices.clear();
@@ -399,13 +401,11 @@ function handlePosition(position) {
 
 async function refreshPositions() {
   let positions = [];
-  if (config?.traccarUrl && config?.token) {
-    positions = await fetchPositions(config);
-  }
-  if (config?.debug) {
-    const debugPos = buildDebugPositions(debugState, config, getRouteTotal(), getRoutePoints());
-    positions.push(...debugPos);
-  }
+  positions = await fetchPositions(config, {
+    debugState,
+    routeTotalOverride: getRouteTotal(),
+    routePointsOverride: getRoutePoints(),
+  });
   positions.forEach(handlePosition);
   renderLegend();
   renderWaypoints();

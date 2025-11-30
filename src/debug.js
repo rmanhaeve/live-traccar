@@ -1,45 +1,56 @@
 import { pointAtDistance, getRoutePoints, getRouteTotal } from "./route.js";
 import { getAverageSpeedMs, getRecentHeading } from "./stats.js";
 
+const DEBUG_DEVICE_IDS = [10001, 10002, 10003, 10004, 10005];
+const DEBUG_SPEED_MS = 60 / 3.6; // 60 km/h
+const DEBUG_JITTER_METERS = 5;
+
+function jitterPoint(base) {
+  const theta = Math.random() * Math.PI * 2;
+  const r = Math.sqrt(Math.random()) * DEBUG_JITTER_METERS; // uniform in circle
+  const dx = r * Math.cos(theta);
+  const dy = r * Math.sin(theta);
+  const latScale = 111_000; // meters per degree latitude
+  const lngScale = Math.max(Math.cos((base.lat * Math.PI) / 180), 1e-6) * latScale;
+  return { lat: base.lat + dy / latScale, lng: base.lng + dx / lngScale };
+}
+
 export function buildDebugPositions(debugState, config, routeTotalOverride = null, routePointsOverride = null) {
-  const now = new Date().toISOString();
+  const nowIso = new Date().toISOString();
   const total = routeTotalOverride || getRouteTotal() || 0;
   const points = routePointsOverride || getRoutePoints() || [];
   if (!total || !points.length) {
-    return [
-      { deviceId: 10001, latitude: 0, longitude: 0, speed: 0, deviceTime: now },
-      { deviceId: 10002, latitude: 0.01, longitude: 0.01, speed: 0, deviceTime: now },
-      { deviceId: 10003, latitude: 0.02, longitude: 0.02, speed: 0, deviceTime: now },
-    ];
+    return DEBUG_DEVICE_IDS.map((id, idx) => ({
+      deviceId: id,
+      latitude: idx * 0.01,
+      longitude: idx * 0.01,
+      speed: 0,
+      deviceTime: nowIso,
+    }));
   }
   const stepSeconds = config?.refreshSeconds || 10;
-  const debugSpeedMs = 6; // ~22 km/h
-  const deltaFraction = total > 0 ? (debugSpeedMs * stepSeconds) / total : 0;
-  const onTrack = (deviceId, initialFraction) => {
-    const state = debugState.get(deviceId) || { fraction: initialFraction };
-    state.fraction = Math.min(1, state.fraction + deltaFraction);
+  const maybeAdvance = (deviceId, idx) => {
+    const state = debugState.get(deviceId) || {
+      distanceAlong: (total * idx) / DEBUG_DEVICE_IDS.length,
+      lastMs: Date.now() - stepSeconds * 1000,
+    };
+    const nowMs = Date.now();
+    const elapsedSeconds = state.lastMs ? (nowMs - state.lastMs) / 1000 : stepSeconds;
+    const delta = Math.max(elapsedSeconds, 0) * DEBUG_SPEED_MS;
+    state.distanceAlong = (state.distanceAlong + delta) % total;
+    state.lastMs = nowMs;
     debugState.set(deviceId, state);
-    const dist = total * state.fraction;
-    const pt = pointAtDistance(dist) || points[0];
+    const basePt = pointAtDistance(state.distanceAlong) || points[0];
+    const noisy = jitterPoint(basePt);
     return {
       deviceId,
-      latitude: pt.lat,
-      longitude: pt.lng,
-      speed: debugSpeedMs / 0.514444, // convert m/s to knots
-      deviceTime: now,
+      latitude: noisy.lat,
+      longitude: noisy.lng,
+      speed: DEBUG_SPEED_MS / 0.514444, // knots
+      deviceTime: nowIso,
     };
   };
-  const offTrack = () => {
-    const mid = pointAtDistance(total * 0.5) || { lat: 0, lng: 0 };
-    return {
-      deviceId: 10003,
-      latitude: mid.lat + 0.05,
-      longitude: mid.lng + 0.05,
-      speed: 0,
-      deviceTime: now,
-    };
-  };
-  return [onTrack(10001, Math.random() * 0.8), onTrack(10002, 0.2 + Math.random() * 0.6), offTrack()];
+  return DEBUG_DEVICE_IDS.map((id, idx) => maybeAdvance(id, idx));
 }
 
 export function installDebugInfoHook({
