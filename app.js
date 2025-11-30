@@ -47,6 +47,7 @@ import {
   startViewerLocation as vizStartViewerLocation,
   stopViewerLocation as vizStopViewerLocation,
   updateHelpContent,
+  refreshHistoryOverlay,
 } from "./src/visualization.js";
 
 const statusEl = document.getElementById("status");
@@ -852,6 +853,7 @@ function handlePosition(position) {
   markActiveOnRoute(position.deviceId, prog, activeStartTimes, timeMs || Date.now(), positionsHistory);
   if (timeMs) recordProgressEvents(position.deviceId, prevProj, prog?.proj, timeMs);
   updateMarker(position);
+  refreshHistoryOverlay(position.deviceId);
 }
 
 async function refreshPositions() {

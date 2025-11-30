@@ -38,6 +38,7 @@ export const DEFAULT_TEXTS = {
   historyUpcoming: "Upcoming waypoints",
   historyEta: "ETA",
   historyDistanceTo: "Distance to",
+  historyUpdated: "Updated",
   historyNone: "None yet",
   historyShow: "Show history",
   helpTip:

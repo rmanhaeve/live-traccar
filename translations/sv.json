@@ -22,6 +22,7 @@
   "historyUpcoming": "Kommande waypoints",
   "historyEta": "ETA",
   "historyDistanceTo": "Avstånd till",
+  "historyUpdated": "Uppdaterad",
   "historyNone": "Inga än",
   "historyShow": "Visa historik",
   "helpTip": "Välj en deltagare för att se live-ETA till waypoints. Högerklicka eller långtryck på kartan för Google Maps/Waze/koordinater och ETA till den punkten.",

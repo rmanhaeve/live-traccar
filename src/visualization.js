@@ -42,6 +42,7 @@ const state = {
   lastPositions: null,
   getActiveStartTime: null,
   historyOverlay: null,
+  historyOverlayDeviceId: null,
   routeWaypoints: [],
   trackData: [],
   map: null,
@@ -466,12 +467,21 @@ function hideHistoryOverlay() {
     state.historyOverlay.remove();
     state.historyOverlay = null;
   }
+  state.historyOverlayDeviceId = null;
 }
 
 function showHistoryOverlay(deviceId) {
+  const targetId = deviceId;
   const hist = state.getProgressHistory(deviceId);
   if (!hist) return;
   hideHistoryOverlay();
+  state.historyOverlayDeviceId = targetId;
+  const formatTimeOnly = (ms) => {
+    if (ms == null) return "—";
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  };
   const overlay = document.createElement("div");
   overlay.className = "history-overlay";
   overlay.addEventListener("click", (e) => {
@@ -482,7 +492,13 @@ function showHistoryOverlay(deviceId) {
   const header = document.createElement("div");
   header.className = "history-modal-header";
   const title = document.createElement("div");
-  title.textContent = state.t("historyTitle");
+  title.className = "history-title-wrap";
+  const titleText = document.createElement("span");
+  titleText.textContent = state.t("historyTitle");
+  const updated = document.createElement("span");
+  updated.className = "history-updated";
+  updated.textContent = `(${state.t("historyUpdated")} ${formatTimeOnly(Date.now())})`;
+  title.append(titleText, updated);
   const close = document.createElement("button");
   close.className = "history-close";
   close.textContent = "×";
@@ -491,12 +507,6 @@ function showHistoryOverlay(deviceId) {
   panel.appendChild(header);
   const sections = document.createElement("div");
   sections.className = "history-sections";
-  const formatTimeOnly = (ms) => {
-    if (ms == null) return "—";
-    const d = new Date(ms);
-    if (Number.isNaN(d.getTime())) return "—";
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  };
   const addSection = (label, items, columns, formatter) => {
     const block = document.createElement("div");
     block.className = "history-section";
@@ -663,6 +673,14 @@ function attachHistoryButton(marker, deviceId) {
     e.stopPropagation();
     showHistoryOverlay(deviceId);
   });
+}
+
+export function refreshHistoryOverlay(deviceId = null) {
+  if (!state.historyOverlay || state.historyOverlayDeviceId == null) return;
+  if (deviceId != null && deviceId !== state.historyOverlayDeviceId) return;
+  const targetId = state.historyOverlayDeviceId;
+  hideHistoryOverlay();
+  showHistoryOverlay(targetId);
 }
 
 export function initMap() {

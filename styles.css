@@ -470,6 +470,18 @@ body {
   margin-bottom: 10px;
 }
 
+.history-title-wrap {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.history-updated {
+  font-size: 0.9rem;
+  color: #4b5563;
+}
+
 .history-close {
   border: none;
   background: transparent;

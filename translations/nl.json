@@ -22,6 +22,7 @@
   "historyUpcoming": "Aankomende waypoints",
   "historyEta": "ETA",
   "historyDistanceTo": "Afstand tot",
+  "historyUpdated": "Bijgewerkt",
   "historyNone": "Nog niets",
   "historyShow": "Toon geschiedenis",
   "helpTip": "Selecteer een deelnemer om live ETA's naar waypoints te zien. Rechtsklik of long-press op de kaart voor Google Maps/Waze/coördinaten en ETA tot dat punt.",
