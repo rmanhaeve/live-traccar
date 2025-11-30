@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "scripts": {
     "lint": "echo \"no lint configured\"",
-    "test": "node test/test-matcher.js && node test/test-debug-history.js"
+    "test": "node test/run-all.js"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

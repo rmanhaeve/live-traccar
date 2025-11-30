@@ -7,7 +7,12 @@ let routeTotal = 0;
 
 export function parseGpx(xmlText) {
   const xml = new DOMParser().parseFromString(xmlText, "application/xml");
-  const error = xml.querySelector("parsererror");
+  const error =
+    typeof xml.querySelector === "function"
+      ? xml.querySelector("parsererror")
+      : xml.getElementsByTagName && xml.getElementsByTagName("parsererror").length
+        ? xml.getElementsByTagName("parsererror")[0]
+        : null;
   if (error) throw new Error("GPX parse error");
   const segments = [];
   const trackNodes = Array.from(xml.getElementsByTagName("trk"));
@@ -24,8 +29,14 @@ export function parseGpx(xmlText) {
   const waypoints = Array.from(xml.getElementsByTagName("wpt")).map((wpt) => ({
     lat: Number(wpt.getAttribute("lat")),
     lng: Number(wpt.getAttribute("lon")),
-    name: wpt.querySelector("name")?.textContent?.trim(),
-    desc: wpt.querySelector("desc")?.textContent?.trim(),
+    name: (typeof wpt.querySelector === "function"
+      ? wpt.querySelector("name")
+      : wpt.getElementsByTagName && wpt.getElementsByTagName("name")[0]
+    )?.textContent?.trim(),
+    desc: (typeof wpt.querySelector === "function"
+      ? wpt.querySelector("desc")
+      : wpt.getElementsByTagName && wpt.getElementsByTagName("desc")[0]
+    )?.textContent?.trim(),
   }));
   return { segments, waypoints };
 }
@@ -34,6 +45,7 @@ export function buildRouteProfile(segments) {
   routePoints = [];
   routeDistances = [];
   routeAvgLat = 0;
+  routeTotal = 0;
   segments.forEach((seg) => {
     seg.forEach((pt) => routePoints.push({ lat: pt[0], lng: pt[1] }));
   });
@@ -67,7 +79,7 @@ export function pointAtDistance(distanceAlong) {
   if (!routePoints.length || !routeDistances.length) return null;
   const target = Math.min(Math.max(distanceAlong, 0), routeDistances[routeDistances.length - 1]);
   let idx = routeDistances.findIndex((d) => d >= target);
-  if (idx <= 0) return routePoints[routePoints.length - 1];
+  if (idx <= 0) return routePoints[0];
   if (routeDistances[idx] === target) return routePoints[idx];
   const prevIdx = idx - 1;
   const segmentLen = routeDistances[idx] - routeDistances[prevIdx];
