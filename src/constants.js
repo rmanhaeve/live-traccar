@@ -46,6 +46,8 @@ export const DEFAULT_TEXTS = {
   weatherUnavailable: "Weather unavailable",
   weatherWind: "Wind",
   weatherPrecip: "Rain",
+  legend: "Legend",
+  options: "Options",
   gain: "Gain",
   descent: "Descent",
 };

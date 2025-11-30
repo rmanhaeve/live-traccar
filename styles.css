@@ -239,13 +239,45 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
+.collapsible-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.collapsible-panel .panel-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.collapsible-panel .panel-toggle-icon {
+  font-weight: 700;
+}
+
+.collapsible-panel.collapsed .panel-body {
+  display: none;
+}
+
 .legend-control {
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid #e5e9f0;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 6px 10px 10px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   font-size: 0.9rem;
+}
+
+.legend-body {
   display: grid;
   gap: 6px;
 }
@@ -300,6 +332,28 @@ body {
   background: rgba(12, 139, 199, 0.12);
 }
 
+.toggle-control {
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #e5e9f0;
+  border-radius: 8px;
+  padding: 6px 10px 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  font-size: 0.9rem;
+  min-width: 180px;
+}
+
+.toggle-body {
+  display: grid;
+  gap: 6px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
 .history-inline-btn {
   margin-top: 6px;
   padding: 4px 8px;
@@ -309,23 +363,6 @@ body {
   border-radius: 6px;
   cursor: pointer;
   font: inherit;
-}
-
-.toggle-control {
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid #e5e9f0;
-  border-radius: 8px;
-  padding: 8px 10px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  font-size: 0.9rem;
-  min-width: 180px;
-}
-
-.toggle-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
 }
 
 .waypoint-label-icon {
@@ -628,5 +665,13 @@ body {
     position: static;
     width: 100%;
     margin-top: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .elevation-stats {
+    position: static;
+    text-align: center;
+    margin-top: -2px;
   }
 }

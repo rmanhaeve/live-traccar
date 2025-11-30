@@ -57,6 +57,7 @@ let refreshTimer;
 let downloadButton;
 let langSelector;
 let userPreferences;
+let panelPreferencesCache = null;
 let routeWaypoints = [];
 let distanceTicks = [];
 let weatherToggle;
@@ -69,6 +70,7 @@ const weatherState = { expanded: false, pending: false };
 const WEATHER_STALE_MS = 10 * 60 * 1000;
 const weatherCache = new Map();
 const DEFAULT_HISTORY_HOURS = 24;
+let initialSelectedDeviceId = null;
 
 function getHistoryRetentionMs() {
   const hours = Number(config?.historyHours ?? DEFAULT_HISTORY_HOURS);
@@ -176,6 +178,23 @@ function persistPreferences(partial) {
   setCookie(LANGUAGE_COOKIE, JSON.stringify(merged));
 }
 
+function getPanelPreferences() {
+  const prefs = readPreferences();
+  const panels = prefs?.panels;
+  if (panels && typeof panels === "object") {
+    panelPreferencesCache = panels;
+    return panels;
+  }
+  panelPreferencesCache = panelPreferencesCache || {};
+  return panelPreferencesCache;
+}
+
+function persistPanels(partial) {
+  const merged = { ...getPanelPreferences(), ...partial };
+  panelPreferencesCache = merged;
+  persistPreferences({ panels: merged });
+}
+
 function persistToggles() {
   persistPreferences({
     toggles: {
@@ -204,6 +223,13 @@ function applySavedTogglePreferences() {
   if (typeof toggles.showKmMarkers === "boolean") config.showKmMarkers = toggles.showKmMarkers;
   if (typeof toggles.showWaypoints === "boolean") config.showWaypoints = toggles.showWaypoints;
   if (typeof toggles.showViewerLocation === "boolean") config.showViewerLocation = toggles.showViewerLocation;
+}
+
+function applySavedSelectedDevice(list) {
+  const prefs = readPreferences();
+  const preferredId = prefs?.selectedDeviceId;
+  const hasPreferred = preferredId && list?.some((d) => d.id === preferredId);
+  initialSelectedDeviceId = hasPreferred ? preferredId : null;
 }
 
 function getSelectedDeviceId() {
@@ -594,6 +620,7 @@ async function loadRoute() {
 
 function selectDevice(deviceId, { focus = false } = {}) {
   selectedDeviceId = deviceId;
+  persistPreferences({ selectedDeviceId: deviceId });
   renderLegend();
   renderWaypoints();
   renderToggles();
@@ -625,9 +652,12 @@ async function refreshDevices() {
   }
   devices.clear();
   list.forEach((d) => devices.set(d.id, d));
+  applySavedSelectedDevice(list);
   renderLegend();
   if (!selectedDeviceId && list.length) {
-    selectDevice(list[0].id);
+    const preferred = initialSelectedDeviceId && devices.has(initialSelectedDeviceId) ? initialSelectedDeviceId : null;
+    const targetId = preferred || list[0].id;
+    selectDevice(targetId);
   }
 }
 
@@ -851,6 +881,8 @@ function setupUiBindings() {
     startViewerLocation: () => vizStartViewerLocation(),
     stopViewerLocation: () => vizStopViewerLocation(),
     persistToggles,
+    persistPanels,
+    getPanelPreferences,
     devices,
     lastSeen,
     lastPositions,

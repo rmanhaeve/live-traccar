@@ -29,6 +29,8 @@ const state = {
   startViewerLocation: null,
   stopViewerLocation: null,
   persistToggles: () => {},
+  persistPanels: () => {},
+  getPanelPreferences: () => ({}),
   devices: null,
   lastSeen: null,
   lastPositions: null,
@@ -46,8 +48,10 @@ const state = {
   projectionLines: new Map(),
   legendControl: null,
   legendContainer: null,
+  legendBody: null,
   markerToggleControl: null,
   toggleContainer: null,
+  toggleBody: null,
   viewerMarker: null,
   viewerWatchId: null,
   contextMenuEl: null,
@@ -151,6 +155,45 @@ function chooseTickStep(range, targetCount = 4) {
   return candidates[candidates.length - 1] * pow;
 }
 
+function getElevationPadding(w, h) {
+  const pad = Math.min(w, h) * 0.05;
+  return Math.max(28, pad);
+}
+
+function createCollapsiblePanel(container, title, prefKey) {
+  const prefs = state.getPanelPreferences ? state.getPanelPreferences() : {};
+  if (prefKey && prefs[prefKey]) {
+    container.classList.add("collapsed");
+  }
+  const header = document.createElement("button");
+  header.type = "button";
+  header.className = "panel-toggle";
+  const titleSpan = document.createElement("span");
+  titleSpan.textContent = title;
+  const icon = document.createElement("span");
+  icon.className = "panel-toggle-icon";
+  icon.textContent = "▼";
+  header.append(titleSpan, icon);
+  const body = document.createElement("div");
+  body.className = "panel-body";
+  const setIcon = () => {
+    const collapsed = container.classList.contains("collapsed");
+    icon.textContent = collapsed ? "▼" : "▲";
+  };
+  setIcon();
+  header.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const collapsed = container.classList.toggle("collapsed");
+    setIcon();
+    if (prefKey && state.persistPanels) {
+      state.persistPanels({ [prefKey]: collapsed });
+    }
+  });
+  container.append(header, body);
+  return body;
+}
+
 function clearGroup(g) {
   if (!g) return;
   while (g.firstChild) g.removeChild(g.firstChild);
@@ -189,7 +232,7 @@ function renderElevationChart() {
   const w = Math.max(els.chart.clientWidth || 0, 300);
   const h = Math.max(els.chart.clientHeight || 0, 120);
   els.chart.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  const pad = Math.min(w, h) * 0.05;
+  const pad = getElevationPadding(w, h);
   const spanEle = Math.max(1, maxEle - minEle);
   clearGroup(els.gridXGroup);
   clearGroup(els.gridYGroup);
@@ -285,7 +328,7 @@ function renderElevationProgress() {
   const vb = els.chart.viewBox.baseVal;
   const w = vb?.width || 100;
   const h = vb?.height || 50;
-  const pad = Math.min(w, h) * 0.05;
+  const pad = getElevationPadding(w, h);
   const x = pad + ((Math.max(0, Math.min(state.elevationProgressDistance, total)) / total) * (w - pad * 2));
   // find elevation at distance
   const distances = profile.distances;
@@ -357,6 +400,8 @@ export function setupVisualization(deps) {
   state.startViewerLocation = deps.startViewerLocation || startViewerLocation;
   state.stopViewerLocation = deps.stopViewerLocation || stopViewerLocation;
   state.persistToggles = deps.persistToggles;
+  state.persistPanels = deps.persistPanels || (() => {});
+  state.getPanelPreferences = deps.getPanelPreferences || (() => ({}));
   state.devices = deps.devices;
   state.lastSeen = deps.lastSeen;
   state.lastPositions = deps.lastPositions;
@@ -691,20 +736,22 @@ function ensureLegend() {
   if (!state.legendControl) {
     state.legendControl = L.control({ position: "bottomright" });
     state.legendControl.onAdd = () => {
-      state.legendContainer = L.DomUtil.create("div", "legend-control");
+      state.legendContainer = L.DomUtil.create("div", "legend-control collapsible-panel");
       L.DomEvent.disableClickPropagation(state.legendContainer);
       L.DomEvent.disableScrollPropagation(state.legendContainer);
+      state.legendBody = createCollapsiblePanel(state.legendContainer, state.t("legend"), "legendCollapsed");
+      state.legendBody.classList.add("legend-body");
       return state.legendContainer;
     };
     state.legendControl.addTo(state.map);
   }
-  return state.legendContainer;
+  return state.legendBody;
 }
 
 export function renderLegend() {
-  const container = ensureLegend();
-  if (!container || !state.devices) return;
-  container.innerHTML = "";
+  const body = ensureLegend();
+  if (!body || !state.devices) return;
+  body.innerHTML = "";
   const deviceEntries = Array.from(state.devices.values()).filter((d) => state.filterDevice(d.id));
   deviceEntries.forEach((device) => {
     const item = document.createElement("div");
@@ -742,7 +789,7 @@ export function renderLegend() {
       focusDevice(device.id);
     });
     item.appendChild(btn);
-    container.appendChild(item);
+    body.appendChild(item);
   });
   if (state.config?.showViewerLocation) {
     const item = document.createElement("div");
@@ -761,7 +808,7 @@ export function renderLegend() {
       focusViewer();
     });
     item.appendChild(btn);
-    container.appendChild(item);
+    body.appendChild(item);
   }
 }
 
@@ -770,14 +817,17 @@ export function renderToggles() {
   if (!state.markerToggleControl) {
     state.markerToggleControl = L.control({ position: "topright" });
     state.markerToggleControl.onAdd = () => {
-      state.toggleContainer = L.DomUtil.create("div", "toggle-control");
+      state.toggleContainer = L.DomUtil.create("div", "toggle-control collapsible-panel");
       L.DomEvent.disableClickPropagation(state.toggleContainer);
       L.DomEvent.disableScrollPropagation(state.toggleContainer);
+      state.toggleBody = createCollapsiblePanel(state.toggleContainer, state.t("options"), "optionsCollapsed");
+      state.toggleBody.classList.add("toggle-body");
       return state.toggleContainer;
     };
     state.markerToggleControl.addTo(state.map);
   }
-  state.toggleContainer.innerHTML = "";
+  if (!state.toggleBody) return;
+  state.toggleBody.innerHTML = "";
   const kmRow = document.createElement("label");
   kmRow.className = "toggle-row";
   const kmCb = document.createElement("input");
@@ -789,7 +839,7 @@ export function renderToggles() {
     state.persistToggles();
   });
   kmRow.append(kmCb, document.createTextNode(` ${state.t("toggleKm")}`));
-  state.toggleContainer.appendChild(kmRow);
+  state.toggleBody.appendChild(kmRow);
 
   const wpRow = document.createElement("label");
   wpRow.className = "toggle-row";
@@ -802,7 +852,7 @@ export function renderToggles() {
     state.persistToggles();
   });
   wpRow.append(wpCb, document.createTextNode(` ${state.t("toggleWp")}`));
-  state.toggleContainer.appendChild(wpRow);
+  state.toggleBody.appendChild(wpRow);
 
   const youRow = document.createElement("label");
   youRow.className = "toggle-row";
@@ -817,7 +867,7 @@ export function renderToggles() {
     state.persistToggles();
   });
   youRow.append(youCb, document.createTextNode(` ${state.t("toggleYou")}`));
-  state.toggleContainer.appendChild(youRow);
+  state.toggleBody.appendChild(youRow);
 }
 
 export function updateMarker(position) {
