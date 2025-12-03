@@ -470,7 +470,7 @@ function hideHistoryOverlay() {
   state.historyOverlayDeviceId = null;
 }
 
-function showHistoryOverlay(deviceId) {
+function showHistoryOverlay(deviceId, { collapsedSections = {}, scrollTop = 0 } = {}) {
   const targetId = deviceId;
   const hist = state.getProgressHistory(deviceId);
   if (!hist) return;
@@ -507,9 +507,10 @@ function showHistoryOverlay(deviceId) {
   panel.appendChild(header);
   const sections = document.createElement("div");
   sections.className = "history-sections";
-  const addSection = (label, items, columns, formatter) => {
+  const addSection = (label, items, columns, formatter, key = label) => {
     const block = document.createElement("div");
     block.className = "history-section";
+    block.dataset.sectionKey = key;
     const headerRow = document.createElement("button");
     headerRow.type = "button";
     headerRow.className = "history-section-header";
@@ -580,8 +581,9 @@ function showHistoryOverlay(deviceId) {
     headerRow.addEventListener("click", () => {
       setCollapsed(!block.classList.contains("collapsed"));
     });
-    const initialCollapsed = Array.isArray(items) && items.length > 10;
-    setCollapsed(initialCollapsed);
+    const prefCollapsed = key in collapsedSections ? collapsedSections[key] : null;
+    const initialCollapsed = prefCollapsed ?? (Array.isArray(items) && items.length > 10);
+    setCollapsed(Boolean(initialCollapsed));
     sections.appendChild(block);
   };
   const kmWithSpeed = [];
@@ -615,7 +617,8 @@ function showHistoryOverlay(deviceId) {
       const km = `${Math.round((item.distanceAlong / 1000) * 10) / 10} km`;
       const speed = Number.isFinite(item.speedKph) ? `${Math.round(item.speedKph * 10) / 10} km/h` : "—";
       return [km, formatTime(item.timeMs), speed];
-    }
+    },
+    "historyKm"
   );
   addSection(
     state.t("historyWp"),
@@ -627,7 +630,8 @@ function showHistoryOverlay(deviceId) {
       const enter = formatTime(item.enterMs);
       const leave = formatTime(item.leaveMs);
       return [`${name} (${km})`, enter, leave];
-    }
+    },
+    "historyWp"
   );
   const progress = state.getDeviceProgress(deviceId);
   const currentDist = progress?.proj?.distanceAlong ?? 0;
@@ -653,13 +657,20 @@ function showHistoryOverlay(deviceId) {
         const delta = Math.max((wp.distanceAlong ?? 0) - currentDist, 0);
         const toKm = `${Math.round((delta / 1000) * 10) / 10} km`;
         return [wp.name || state.t("historyWp"), etaText, km, toKm];
-      }
+      },
+      "historyUpcoming"
     );
   }
   panel.appendChild(sections);
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   state.historyOverlay = overlay;
+  if (Number.isFinite(scrollTop) && scrollTop > 0) {
+    panel.scrollTop = scrollTop;
+    requestAnimationFrame(() => {
+      panel.scrollTop = scrollTop;
+    });
+  }
 }
 
 function attachHistoryButton(marker, deviceId) {
@@ -679,8 +690,16 @@ export function refreshHistoryOverlay(deviceId = null) {
   if (!state.historyOverlay || state.historyOverlayDeviceId == null) return;
   if (deviceId != null && deviceId !== state.historyOverlayDeviceId) return;
   const targetId = state.historyOverlayDeviceId;
+  const collapsedSections = {};
+  const existingPanel = state.historyOverlay.querySelector(".history-modal");
+  const scrollTop = existingPanel?.scrollTop ?? 0;
+  state.historyOverlay.querySelectorAll(".history-section").forEach((section) => {
+    const key = section.dataset.sectionKey || section.querySelector(".history-label")?.textContent || null;
+    if (!key) return;
+    collapsedSections[key] = section.classList.contains("collapsed");
+  });
   hideHistoryOverlay();
-  showHistoryOverlay(targetId);
+  showHistoryOverlay(targetId, { collapsedSections, scrollTop });
 }
 
 export function initMap() {
