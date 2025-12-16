@@ -43,5 +43,11 @@
   "weatherFetching": "Weer ophalen…",
   "weatherUnavailable": "Weer niet beschikbaar",
   "weatherWind": "Wind",
-  "weatherPrecip": "Regen"
+  "weatherPrecip": "Regen",
+  "weatherNextHours": "Volgende {hours} uur",
+  "weatherPrev": "Vorige",
+  "weatherNext": "Volgende",
+  "closeLabel": "Sluiten",
+  "countdownStartsIn": "Begint over",
+  "countdownStartAt": "Start: {time}"
 }

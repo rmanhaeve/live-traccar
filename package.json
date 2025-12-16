@@ -5,7 +5,8 @@
   "version": "0.1.0",
   "scripts": {
     "lint": "echo \"no lint configured\"",
-    "test": "node test/run-all.js"
+    "test": "node test/run-all.js",
+    "postinstall": "node scripts/install-leaflet.js"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

@@ -43,5 +43,11 @@
   "weatherFetching": "Loading weather…",
   "weatherUnavailable": "Weather unavailable",
   "weatherWind": "Wind",
-  "weatherPrecip": "Rain"
+  "weatherPrecip": "Rain",
+  "weatherNextHours": "Next {hours} hours",
+  "weatherPrev": "Prev",
+  "weatherNext": "Next",
+  "closeLabel": "Close",
+  "countdownStartsIn": "Starts in",
+  "countdownStartAt": "Start: {time}"
 }

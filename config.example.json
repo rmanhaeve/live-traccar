@@ -10,6 +10,6 @@
   "staleMinutes": 15,
   "startTime": null,
   "debugStartTime": null,
-  "debugSpeedKph": 60,
+  "expectedAvgSpeedKph": 60,
   "historyHours": 24
 }

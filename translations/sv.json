@@ -43,5 +43,11 @@
   "weatherFetching": "Hämtar väder…",
   "weatherUnavailable": "Väder ej tillgängligt",
   "weatherWind": "Vind",
-  "weatherPrecip": "Regn"
+  "weatherPrecip": "Regn",
+  "weatherNextHours": "Nästa {hours} timmar",
+  "weatherPrev": "Föregående",
+  "weatherNext": "Nästa",
+  "closeLabel": "Stäng",
+  "countdownStartsIn": "Startar om",
+  "countdownStartAt": "Start: {time}"
 }

@@ -9,10 +9,11 @@ Lightweight static viewer that overlays GPX routes and live Traccar device locat
   - `translationFile`: translation JSON (default: `translations/en.json`).
   - `traccarUrl`: base URL of your Traccar server.
   - `token`: API token for the account that can view the devices.
-  - Optional: `refreshSeconds`, `deviceIds` (array to whitelist specific devices), `showViewerLocation` (show a “You” dot using browser geolocation), `staleMinutes` (after this age, participant dots/legend turn gray), `startTime` (ISO string to ignore history before the event start), `debugStartTime`/`debugSpeedKph` (override the start datetime and speed for simulated riders in debug mode), `historyHours` (how many hours of history to fetch/retain for progress history; defaults to 24h; ETA averages still only use the last hour). Km marker spacing now follows built-in zoom-based defaults (sparser by default). ETAs use average speed over the last hour; if insufficient data, they fall back to available history/instant speed. Off-route threshold: >200 m from the track counts as off-route (ETAs will show “participant not on track”).
+  - Optional: `refreshSeconds`, `deviceIds` (array to whitelist specific devices), `showViewerLocation` (show a “You” dot using browser geolocation), `staleMinutes` (after this age, participant dots/legend turn gray), `startTime` (ISO string to ignore history before the event start and, if set in the future, show a countdown), `expectedAvgSpeedKph` (used by debug riders and as an ETA fallback when live data is insufficient), `debugStartTime` (override the start datetime for simulated riders in debug mode), `historyHours` (how many hours of history to fetch/retain for progress history; defaults to 24h; ETA averages still only use the last hour). Km marker spacing now follows built-in zoom-based defaults (sparser by default). ETAs use average speed over the last hour; if insufficient data, they fall back to available history/instant speed.
+  - `startTime` format: use an ISO 8601 datetime string with timezone for accuracy, e.g. `2024-09-15T08:30:00Z` (UTC) or `2024-09-15T08:30:00+02:00`. If you omit the timezone (e.g. `2024-09-15T08:30:00`), the browser assumes local time.
 
 Debug mode is controlled via URL query params: append `?debug=1` (or `debug=true/on/yes`) to enable fake riders; use `debug=0`/`false` to disable.
-- When debug mode is on, no calls are made to the real Traccar API. Fake riders are generated forward from `debugStartTime` at `debugSpeedKph`, with staggered start times to spread them along the route.
+- When debug mode is on, no calls are made to the real Traccar API. Fake riders are generated forward from `debugStartTime` at `expectedAvgSpeedKph`, with staggered start times to spread them along the route.
 - Leaflet assets are vendored in `vendor/leaflet` (no CDN needed). `config.json` is git-ignored so you don’t accidentally commit secrets.
 
 ## Running locally
@@ -22,6 +23,16 @@ Debug mode is controlled via URL query params: append `?debug=1` (or `debug=true
    python -m http.server 8000
    ```
 3. Open http://localhost:8000 in your browser. The map will load the GPX route, show waypoints, and poll Traccar for live positions using your config.
+
+## Build
+No bundler is required—the site is plain ES modules served as static files. If you want dependencies installed for tests or local tooling, run:
+```bash
+npm install
+```
+Then serve the repo (see “Running locally”) or point your static host at the project root.
+
+### Leaflet assets (fixes “ReferenceError: L is not defined”)
+Leaflet must be available at `vendor/leaflet/leaflet.js` and `vendor/leaflet/leaflet.css` (what `index.html` loads). `npm install` now copies these files for you via `postinstall`, so you should not see `ReferenceError: L is not defined` when serving locally. If you skip npm install, download the Leaflet release zip (or copy from another install) and drop its `dist` contents into `vendor/leaflet`.
 
 ## How it works
 - Uses Leaflet with OSM tiles for the base map.

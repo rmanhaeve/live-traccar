@@ -52,11 +52,16 @@ import {
 
 const statusEl = document.getElementById("status");
 const titleEl = document.getElementById("title");
+const countdownEl = document.getElementById("countdown");
+const countdownLabelEl = document.getElementById("countdown-label");
+const countdownTimeEl = document.getElementById("countdown-time");
+const countdownStartEl = document.getElementById("countdown-start");
 let config = { ...DEFAULT_CONFIG };
 let texts = { ...DEFAULT_TEXTS };
 let currentLanguage = "en";
 let selectedDeviceId = null;
 let refreshTimer;
+let countdownTimer;
 let downloadButton;
 let langSelector;
 let userPreferences;
@@ -70,10 +75,15 @@ let weatherErrorEl;
 let weatherSummaryEl;
 let weatherUpdatedEl;
 const weatherState = { expanded: false, pending: false };
+let weatherOverlay;
+const WEATHER_PAGE_SIZE = 6;
+const WEATHER_MAX_HOURS = 24;
+let weatherPageOffset = 0;
 const WEATHER_STALE_MS = 10 * 60 * 1000;
 const weatherCache = new Map();
 const DEFAULT_HISTORY_HOURS = 24;
 let initialSelectedDeviceId = null;
+let eventStartMs = null;
 
 function getHistoryRetentionMs() {
   const hours = Number(config?.historyHours ?? DEFAULT_HISTORY_HOURS);
@@ -140,6 +150,82 @@ function formatDateTimeFull(timeStr) {
   const d = timeStr instanceof Date ? timeStr : new Date(timeStr);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
+
+function parseEventStart(raw) {
+  if (!raw) return null;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatCountdownMs(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (days || hours) parts.push(`${hours}h`);
+  if (days || hours || minutes) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
+  return parts.join(" ");
+}
+
+function getEventStartMs() {
+  return Number.isFinite(eventStartMs) ? eventStartMs : null;
+}
+
+function getExpectedSpeedMs() {
+  if (!Number.isFinite(config?.expectedAvgSpeedKph)) return 0;
+  if (config.expectedAvgSpeedKph <= 0) return 0;
+  return config.expectedAvgSpeedKph / 3.6;
+}
+
+function stopCountdownTimer() {
+  if (countdownTimer) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+}
+
+function renderCountdown() {
+  if (!countdownEl) return;
+  const startMs = getEventStartMs();
+  if (!startMs) {
+    if (countdownLabelEl) countdownLabelEl.textContent = "";
+    if (countdownTimeEl) countdownTimeEl.textContent = "";
+    if (countdownStartEl) countdownStartEl.textContent = "";
+    countdownEl.classList.add("hidden");
+    stopCountdownTimer();
+    return;
+  }
+  const diff = startMs - Date.now();
+  if (diff <= 0) {
+    if (countdownLabelEl) countdownLabelEl.textContent = "";
+    if (countdownTimeEl) countdownTimeEl.textContent = "";
+    if (countdownStartEl) countdownStartEl.textContent = "";
+    countdownEl.classList.add("hidden");
+    stopCountdownTimer();
+    return;
+  }
+  countdownEl.classList.remove("hidden");
+  if (countdownLabelEl) countdownLabelEl.textContent = t("countdownStartsIn");
+  if (countdownTimeEl) countdownTimeEl.textContent = formatCountdownMs(diff);
+  if (countdownStartEl) {
+    countdownStartEl.textContent = t("countdownStartAt", {
+      time: formatDateTimeFull(new Date(startMs)),
+    });
+  }
+}
+
+function refreshCountdownTimer() {
+  stopCountdownTimer();
+  renderCountdown();
+  const startMs = getEventStartMs();
+  if (startMs && startMs > Date.now()) {
+    countdownTimer = setInterval(renderCountdown, 1000);
+  }
 }
 
 function getCookie(name) {
@@ -267,6 +353,7 @@ function computeEtaForDevice(deviceId, targetDistance) {
     lastProjection,
     positionsHistory,
     activeStartTimes,
+    expectedSpeedMs: getExpectedSpeedMs(),
   });
 }
 
@@ -276,6 +363,7 @@ async function loadConfig() {
     if (!res.ok) throw new Error("config.json missing");
     const cfg = await res.json();
     Object.assign(config, DEFAULT_CONFIG, cfg);
+    eventStartMs = parseEventStart(config.startTime);
     applyUrlOverrides();
     applySavedTogglePreferences();
     texts = { ...DEFAULT_TEXTS };
@@ -287,6 +375,7 @@ async function loadConfig() {
     renderWaypoints();
     renderToggles();
     persistToggles();
+    refreshCountdownTimer();
   } catch (err) {
     setStatus("");
   }
@@ -329,6 +418,7 @@ async function loadTranslations(preferredLang) {
   renderLegend();
   renderWaypoints();
   renderToggles();
+  renderCountdown();
 }
 
 function initLangSelector() {
@@ -434,6 +524,113 @@ function setWeatherExpanded(expanded) {
   if (weatherPanel) weatherPanel.classList.toggle("hidden", !expanded);
 }
 
+function hideWeatherOverlay() {
+  if (weatherOverlay && weatherOverlay.parentNode) {
+    weatherOverlay.parentNode.removeChild(weatherOverlay);
+  }
+  weatherOverlay = null;
+}
+
+function formatWeatherDetails(row) {
+  const bits = [];
+  if (row.temp != null) bits.push(`${row.temp}°C`);
+  if (row.precip != null) bits.push(`${row.precip}% ${t("weatherPrecip")}`);
+  if (row.wind != null) bits.push(`${row.wind} km/h ${t("weatherWind")}`);
+  return bits.join(" · ") || t("weatherUnavailable");
+}
+
+function renderWeatherOverlay(data) {
+  hideWeatherOverlay();
+  const overlay = document.createElement("div");
+  overlay.className = "weather-modal-overlay";
+  const modal = document.createElement("div");
+  modal.className = "weather-modal";
+  const header = document.createElement("div");
+  header.className = "weather-modal-header";
+  const title = document.createElement("div");
+  title.className = "weather-modal-title";
+  title.textContent = t("weatherNextHours", { hours: WEATHER_PAGE_SIZE });
+  const nav = document.createElement("div");
+  nav.className = "weather-modal-nav";
+  const prevBtn = document.createElement("button");
+  prevBtn.type = "button";
+  prevBtn.className = "weather-nav-btn";
+  prevBtn.textContent = t("weatherPrev");
+  prevBtn.disabled = weatherPageOffset <= 0;
+  prevBtn.addEventListener("click", async () => {
+    weatherPageOffset = Math.max(0, weatherPageOffset - WEATHER_PAGE_SIZE);
+    const nextData = await refreshWeather(true, selectedDeviceId, WEATHER_PAGE_SIZE, weatherPageOffset);
+    renderWeatherOverlay(nextData);
+  });
+  const nextBtn = document.createElement("button");
+  nextBtn.type = "button";
+  nextBtn.className = "weather-nav-btn";
+  nextBtn.textContent = t("weatherNext");
+  nextBtn.disabled = weatherPageOffset + WEATHER_PAGE_SIZE >= WEATHER_MAX_HOURS;
+  nextBtn.addEventListener("click", async () => {
+    weatherPageOffset = Math.min(WEATHER_MAX_HOURS - WEATHER_PAGE_SIZE, weatherPageOffset + WEATHER_PAGE_SIZE);
+    const nextData = await refreshWeather(true, selectedDeviceId, WEATHER_PAGE_SIZE, weatherPageOffset);
+    renderWeatherOverlay(nextData);
+  });
+  nav.append(prevBtn, nextBtn);
+  const updated = document.createElement("div");
+  updated.className = "weather-modal-updated";
+  if (weatherUpdatedEl?.textContent) updated.textContent = weatherUpdatedEl.textContent;
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "weather-modal-close";
+  closeBtn.textContent = t("closeLabel");
+  closeBtn.addEventListener("click", hideWeatherOverlay);
+  header.append(title, nav, updated, closeBtn);
+
+  const rows = data?.rows || [];
+  const list = document.createElement("div");
+  list.className = "weather-modal-list";
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "weather-modal-empty";
+    empty.textContent = t("weatherUnavailable");
+    list.appendChild(empty);
+  } else {
+    rows.forEach((row) => {
+      const item = document.createElement("div");
+      item.className = "weather-modal-row";
+      const timeCol = document.createElement("div");
+      timeCol.className = "weather-modal-col time";
+      timeCol.textContent = row.timeMs ? formatTimeLabel(new Date(row.timeMs)) : row.label || "";
+      const distCol = document.createElement("div");
+      distCol.className = "weather-modal-col distance";
+      distCol.textContent =
+        row.distanceAlong != null && Number.isFinite(row.distanceAlong)
+          ? `${Math.round((row.distanceAlong / 1000) * 10) / 10} km`
+          : "—";
+      const condCol = document.createElement("div");
+      condCol.className = "weather-modal-col conditions";
+      condCol.textContent = formatWeatherDetails(row);
+      item.append(timeCol, distCol, condCol);
+      list.appendChild(item);
+    });
+  }
+
+  modal.append(header, list);
+  overlay.appendChild(modal);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) hideWeatherOverlay();
+  });
+  document.body.appendChild(overlay);
+  weatherOverlay = overlay;
+}
+
+async function showWeatherOverlay(deviceId = selectedDeviceId) {
+  weatherPageOffset = 0;
+  const data = await refreshWeather(false, deviceId, WEATHER_PAGE_SIZE, weatherPageOffset);
+  if (!data) {
+    hideWeatherOverlay();
+    return;
+  }
+  renderWeatherOverlay(data);
+}
+
 function findClosestHourly(data, targetMs) {
   const times = data?.hourly?.time || [];
   const temps = data?.hourly?.temperature_2m || [];
@@ -490,35 +687,44 @@ async function fetchWeatherForPoint(planItem) {
   return { row, summary };
 }
 
-function getWeatherPlan(deviceId, hours = 4) {
+function getWeatherPlan(deviceId, hours = WEATHER_PAGE_SIZE, offsetHours = 0) {
   const total = getRouteTotal() || 0;
   const progress = deviceId ? getDeviceProgress(deviceId) : null;
+  const startMs = getEventStartMs();
   const now = Date.now();
+  const baseTime = startMs && startMs > now ? startMs : now;
   if (progress && !progress.offtrack && progress.proj?.distanceAlong != null) {
-    const speedMs = getAverageSpeedForDevice(deviceId);
+    const speedMs = getAverageSpeedForDevice(deviceId) || getExpectedSpeedMs();
     const baseDist = progress.proj.distanceAlong;
     const plan = [];
     for (let i = 0; i < hours; i += 1) {
-      const offsetMs = (i + 1) * 60 * 60 * 1000;
+      const offsetMs = (offsetHours + i + 1) * 60 * 60 * 1000;
       const delta = speedMs > 0 ? (speedMs * offsetMs) / 1000 : 0;
       const targetDist = Math.min(total || baseDist, baseDist + delta);
       const coord = pointAtDistance(targetDist) || progress.proj.point || progress.pos || null;
       if (!coord) break;
-      plan.push({ timeMs: now + offsetMs, coord, distanceAlong: targetDist });
+      plan.push({ timeMs: baseTime + offsetMs, coord, distanceAlong: targetDist });
     }
     if (plan.length) return plan;
   }
-  const center = getRouteCenter();
-  if (!center) return null;
-  return Array.from({ length: hours }, (_, idx) => ({
-    timeMs: now + (idx + 1) * 60 * 60 * 1000,
-    coord: center,
-    distanceAlong: null,
-  }));
+  const speedMs = getExpectedSpeedMs();
+  const pts = getRoutePoints();
+  const startCoord = pts?.length ? pts[0] : getRouteCenter();
+  if (!startCoord) return null;
+  return Array.from({ length: hours }, (_, idx) => {
+    const offsetMs = (offsetHours + idx + 1) * 60 * 60 * 1000;
+    const targetDist = speedMs > 0 ? Math.min(total || 0, (speedMs * offsetMs) / 1000) : 0;
+    const coord = targetDist && pointAtDistance(targetDist) ? pointAtDistance(targetDist) : startCoord;
+    return {
+      timeMs: baseTime + offsetMs,
+      coord,
+      distanceAlong: targetDist || null,
+    };
+  });
 }
 
-async function fetchWeatherSeries(deviceId) {
-  const plan = getWeatherPlan(deviceId);
+async function fetchWeatherSeries(deviceId, hours = WEATHER_PAGE_SIZE, offsetHours = 0) {
+  const plan = getWeatherPlan(deviceId, hours, offsetHours);
   if (!plan || !plan.length) throw new Error("No route to infer location");
   const results = await Promise.all(plan.map((item) => fetchWeatherForPoint(item)));
   const summary = results.find((r) => r.summary)?.summary || null;
@@ -526,24 +732,29 @@ async function fetchWeatherSeries(deviceId) {
   return { summary, rows };
 }
 
-function getWeatherCacheKey(deviceId) {
-  return deviceId != null ? String(deviceId) : "route";
+function getWeatherCacheKey(deviceId, hours = WEATHER_PAGE_SIZE, offsetHours = 0) {
+  const idPart = deviceId != null ? String(deviceId) : "route";
+  return `${idPart}|${hours}|${offsetHours}`;
 }
 
-async function refreshWeather(force = false, deviceId = selectedDeviceId) {
-  if (!weatherPanel || weatherState.pending) return;
-  const cacheKey = getWeatherCacheKey(deviceId);
+async function refreshWeather(
+  force = false,
+  deviceId = selectedDeviceId,
+  hours = WEATHER_PAGE_SIZE,
+  offsetHours = weatherPageOffset
+) {
+  if (weatherState.pending) return null;
+  const cacheKey = getWeatherCacheKey(deviceId, hours, offsetHours);
   const cached = weatherCache.get(cacheKey);
   if (!force && cached && Date.now() - cached.lastFetch < WEATHER_STALE_MS) {
     renderWeatherSummary(cached.data);
-    renderWeatherForecast(cached.data);
     if (weatherUpdatedEl) {
       weatherUpdatedEl.textContent = new Date(cached.lastFetch).toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
       });
     }
-    return;
+    return cached.data;
   }
   weatherState.pending = true;
   if (weatherErrorEl) {
@@ -552,7 +763,7 @@ async function refreshWeather(force = false, deviceId = selectedDeviceId) {
   }
   if (weatherForecastEl) weatherForecastEl.textContent = t("weatherFetching");
   try {
-    const data = await fetchWeatherSeries(deviceId);
+    const data = await fetchWeatherSeries(deviceId, hours, offsetHours);
     const entry = { data, lastFetch: Date.now() };
     weatherCache.set(cacheKey, entry);
     renderWeatherSummary(entry.data);
@@ -560,12 +771,14 @@ async function refreshWeather(force = false, deviceId = selectedDeviceId) {
     if (weatherUpdatedEl) {
       weatherUpdatedEl.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
+    return entry.data;
   } catch (err) {
     console.error(err);
     if (weatherErrorEl) {
       weatherErrorEl.textContent = t("weatherUnavailable");
       weatherErrorEl.classList.remove("hidden");
     }
+    return null;
   } finally {
     weatherState.pending = false;
   }
@@ -582,11 +795,10 @@ function setupWeatherWidget() {
   if (titleEl) titleEl.textContent = t("weatherTitle");
   if (weatherSummaryEl) weatherSummaryEl.textContent = "";
   setWeatherExpanded(false);
+  if (weatherPanel) weatherPanel.classList.add("hidden");
   if (weatherToggle) {
     weatherToggle.addEventListener("click", () => {
-      const next = !weatherState.expanded;
-      setWeatherExpanded(next);
-      if (next) refreshWeather();
+      showWeatherOverlay().catch((err) => console.error(err));
     });
   }
 }
@@ -669,7 +881,7 @@ async function fetchRecentHistoryForDevice(deviceId) {
   const now = new Date();
   const from = new Date(now.getTime() - getHistoryRetentionMs());
   const data = await fetchRecentHistory(config, deviceId, from, now);
-  const startMs = config?.startTime ? Date.parse(config.startTime) : null;
+  const startMs = getEventStartMs();
   const samples = data
     .map((p) => {
       const time = p.deviceTime || p.fixTime || p.serverTime;
@@ -690,7 +902,7 @@ async function preloadHistory() {
 
 function updatePositionHistory(deviceId, coords, timeMs) {
   if (!timeMs) return;
-  const startMs = config?.startTime ? Date.parse(config.startTime) : null;
+  const startMs = getEventStartMs();
   if (startMs && timeMs < startMs) return;
   const list = positionsHistory.get(deviceId) || [];
   list.push({ t: timeMs, lat: coords[0], lng: coords[1] });

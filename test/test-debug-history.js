@@ -47,7 +47,7 @@ async function run() {
 
   const debugState = new Map();
   const positionsHistory = new Map();
-  const config = { refreshSeconds: 10, debug: true, debugStartTime: "2023-01-01T00:00:00Z", debugSpeedKph: 20 };
+  const config = { refreshSeconds: 10, debug: true, debugStartTime: "2023-01-01T00:00:00Z", expectedAvgSpeedKph: 20 };
 
   try {
     const positions = buildDebugPositions(

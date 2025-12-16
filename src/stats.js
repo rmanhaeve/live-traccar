@@ -173,6 +173,7 @@ export function computeEta(deviceId, targetDistance, {
   lastProjection,
   positionsHistory,
   activeStartTimes,
+  expectedSpeedMs = 0,
 }) {
   const now = Date.now();
   const progress = computeDeviceProgress(deviceId, { lastPositions, lastProjection, positionsHistory });
@@ -181,9 +182,10 @@ export function computeEta(deviceId, targetDistance, {
   const speedMs = speedStats?.averageMs || 0;
   const delta = targetDistance - progress.proj.distanceAlong;
   if (delta <= 0) return { status: "passed" };
-  if (!speedMs || speedMs <= 0) return { status: "unknown" };
-  const arrival = new Date(now + (delta / speedMs) * 1000);
-  const interval = computeEtaInterval(delta, speedStats, now);
+  const effectiveSpeed = speedMs > 0 ? speedMs : Math.max(expectedSpeedMs || 0, 0);
+  if (!effectiveSpeed) return { status: "unknown" };
+  const arrival = new Date(now + (delta / effectiveSpeed) * 1000);
+  const interval = speedMs > 0 ? computeEtaInterval(delta, speedStats, now) : null;
   return { status: "eta", arrival, interval };
 }
 

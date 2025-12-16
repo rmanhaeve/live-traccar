@@ -68,7 +68,8 @@ export function buildDebugPositions(
   const total = routeTotalOverride || getRouteTotal() || 0;
   const points = routePointsOverride || getRoutePoints() || [];
   const nowMs = Date.now();
-  const speedMs = Math.max((config?.debugSpeedKph ?? 60) / 3.6, 0);
+  const speedKph = config?.expectedAvgSpeedKph ?? 60;
+  const speedMs = Math.max(speedKph / 3.6, 0);
   const baseStartMs = parseStartMs(config, nowMs);
 
   if (!total || !points.length || !speedMs) {
