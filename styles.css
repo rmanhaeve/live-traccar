@@ -240,9 +240,19 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 8px;
+  padding: 8px 10px;
   background: #f5f7fb;
   border-radius: 8px;
+  border: 1px solid #e5e9f0;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.weather-row:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.15);
+  border-color: rgba(12, 139, 199, 0.35);
 }
 
 .weather-label {
@@ -340,6 +350,15 @@ body {
   border: 1px solid #e5e9f0;
   border-radius: 10px;
   background: #f8fafc;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.weather-modal-row:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+  border-color: rgba(12, 139, 199, 0.35);
 }
 
 .weather-modal-col.time {

@@ -770,9 +770,9 @@ function renderWeatherSummary(data) {
   const wind = summary.wind;
   const precip = summary.precip;
   const parts = [];
+  if (Number.isFinite(precip)) parts.push(`${precip.toFixed(1)} mm ${t("weatherPrecip")}`);
   if (Number.isFinite(temp)) parts.push(`${Math.round(temp)}°C`);
   if (Number.isFinite(wind)) parts.push(`${Math.round(wind)} km/h ${t("weatherWind")}`);
-  if (Number.isFinite(precip) && precip > 0) parts.push(`${precip.toFixed(1)} mm ${t("weatherPrecip")}`);
   weatherSummaryEl.textContent = parts.join(" · ") || t("weatherUnavailable");
 }
 
@@ -785,7 +785,8 @@ function renderWeatherForecast(data) {
     return;
   }
   rows.forEach((row) => {
-    const div = document.createElement("div");
+    const div = document.createElement("button");
+    div.type = "button";
     div.className = "weather-row";
     const left = document.createElement("div");
     left.className = "weather-label";
@@ -803,6 +804,13 @@ function renderWeatherForecast(data) {
     if (distanceLabel) bits.push(distanceLabel);
     right.textContent = bits.join(" · ");
     div.append(left, right);
+    if (row.coord) {
+      div.addEventListener("click", () => {
+        const ts = row.timeMs ? new Date(row.timeMs).toISOString() : "";
+    const url = `https://www.accuweather.com/en/search-locations?query=${row.coord.lat.toFixed(4)},${row.coord.lng.toFixed(4)}`;
+    window.open(url, "_blank", "noopener");
+  });
+}
     weatherForecastEl.appendChild(div);
   });
 }
@@ -881,7 +889,8 @@ function renderWeatherOverlay(data) {
     list.appendChild(empty);
   } else {
     rows.forEach((row) => {
-      const item = document.createElement("div");
+      const item = document.createElement("button");
+      item.type = "button";
       item.className = "weather-modal-row";
       const timeCol = document.createElement("div");
       timeCol.className = "weather-modal-col time";
@@ -896,6 +905,12 @@ function renderWeatherOverlay(data) {
       condCol.className = "weather-modal-col conditions";
       condCol.textContent = formatWeatherDetails(row);
       item.append(timeCol, distCol, condCol);
+      if (row.coord) {
+        item.addEventListener("click", () => {
+          const url = `https://www.accuweather.com/en/search-locations?query=${row.coord.lat.toFixed(4)},${row.coord.lng.toFixed(4)}`;
+          window.open(url, "_blank", "noopener");
+        });
+      }
       list.appendChild(item);
     });
   }
@@ -964,6 +979,7 @@ async function fetchWeatherForPoint(planItem) {
     precip: closest?.precipProb != null ? Math.round(closest.precipProb) : null,
     wind: closest?.wind != null ? Math.round(closest.wind) : null,
     distanceAlong: planItem.distanceAlong ?? null,
+    coord: planItem.coord || null,
   };
   const summary = data.current
     ? {

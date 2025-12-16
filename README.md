@@ -2,6 +2,15 @@
 
 Lightweight static viewer that overlays GPX routes and live Traccar device locations on an OSM map. No backend server required beyond Traccar; serve the files with any static host (for local testing, `python -m http.server` works).
 
+## Features
+- Live participant tracking from Traccar with off-route/stale detection and legend selection.
+- GPX route rendering with waypoints, km markers, elevation profile, and ETAs to waypoints/map clicks.
+- Event countdown (full-page overlay and topbar) when `startTime` is in the future.
+- Weather summary + hourly forecast modal for the current course segment.
+- Download GPX button, language switcher, help tooltip, and persistent map view (center/zoom stored in cookie).
+- Progress history overlay (distance and waypoint ticks), viewer-location toggle, and context menu (Google/Waze/coords/ETA).
+- Debug tooling: simulated riders, debug time override (including frozen/ticking toggle) via URL or UI, and saved debug state per session.
+
 ## Setup
 - Copy `config.example.json` to `config.json` and set:
   - `title`: page title (defaults to “Live Tracker”).
@@ -9,12 +18,18 @@ Lightweight static viewer that overlays GPX routes and live Traccar device locat
   - `translationFile`: translation JSON (default: `translations/en.json`).
   - `traccarUrl`: base URL of your Traccar server.
   - `token`: API token for the account that can view the devices.
-  - Optional: `refreshSeconds`, `deviceIds` (array to whitelist specific devices), `showViewerLocation` (show a “You” dot using browser geolocation), `staleMinutes` (after this age, participant dots/legend turn gray), `startTime` (ISO string to ignore history before the event start and, if set in the future, show a countdown), `expectedAvgSpeedKph` (used by debug riders and as an ETA fallback when live data is insufficient), `debugStartTime` (override the start datetime for simulated riders in debug mode), `historyHours` (how many hours of history to fetch/retain for progress history; defaults to 24h; ETA averages still only use the last hour). Km marker spacing now follows built-in zoom-based defaults (sparser by default). ETAs use average speed over the last hour; if insufficient data, they fall back to available history/instant speed.
+  - Optional: `refreshSeconds`, `deviceIds` (array to whitelist specific devices), `showViewerLocation` (show a “You” dot using browser geolocation), `staleMinutes` (after this age, participant dots/legend turn gray), `startTime` (ISO string to ignore history before the event start and, if set in the future, show a countdown), `expectedAvgSpeedKph` (used by debug riders and as an ETA fallback when live data is insufficient), `debugStartTime` (override the start datetime for simulated riders in debug mode), `historyHours` (how many hours of history to fetch/retain for progress history; defaults to 24h; ETA averages still only use the last hour). Km marker spacing follows zoom-based defaults (sparser by default). ETAs use average speed over the last hour; if insufficient data, they fall back to available history/instant speed.
   - `startTime` format: use an ISO 8601 datetime string with timezone for accuracy, e.g. `2024-09-15T08:30:00Z` (UTC) or `2024-09-15T08:30:00+02:00`. If you omit the timezone (e.g. `2024-09-15T08:30:00`), the browser assumes local time.
 
 Debug mode is controlled via URL query params: append `?debug=1` (or `debug=true/on/yes`) to enable fake riders; use `debug=0`/`false` to disable.
 - When debug mode is on, no calls are made to the real Traccar API. Fake riders are generated forward from `debugStartTime` at `expectedAvgSpeedKph`, with staggered start times to spread them along the route.
 - Leaflet assets are vendored in `vendor/leaflet` (no CDN needed). `config.json` is git-ignored so you don’t accidentally commit secrets.
+
+### Debug time override (for replay/testing)
+- URL parameters:
+  - `debugTime=ISO_OR_MS`: set “now” to this time on load (e.g. `debugTime=2024-08-01T10:00:00Z`).
+  - `debugTimeFreeze=1` (or `true`): keep time frozen; omit or set to `0` to let it tick.
+- On the debug page, the topbar exposes a datetime input and a tick/freeze toggle; changes also update the URL for sharing.
 
 ## Running locally
 1. Place your GPX file (default `tracks/start.gpx`, or whatever `trackFile` points to).
