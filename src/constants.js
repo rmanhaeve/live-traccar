@@ -62,7 +62,7 @@ export const DEFAULT_TEXTS = {
   weatherUnavailable: "Weather unavailable",
   weatherWind: "Wind",
   weatherPrecip: "Rain",
-  weatherNextHours: "Next {hours} hours",
+  weatherNextHours: "Forecast",
   weatherPrev: "Prev",
   weatherNext: "Next",
   closeLabel: "Close",

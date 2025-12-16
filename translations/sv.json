@@ -44,7 +44,7 @@
   "weatherUnavailable": "Väder ej tillgängligt",
   "weatherWind": "Vind",
   "weatherPrecip": "Regn",
-  "weatherNextHours": "Nästa {hours} timmar",
+  "weatherNextHours": "Prognos",
   "weatherPrev": "Föregående",
   "weatherNext": "Nästa",
   "closeLabel": "Stäng",

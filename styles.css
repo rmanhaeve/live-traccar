@@ -146,11 +146,59 @@ body {
   align-items: center;
   gap: 6px;
   min-width: 140px;
+  border: 2px solid rgba(12, 139, 199, 0.12);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.16);
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+  height: 42px;
 }
 
 .weather-summary {
   font-weight: 600;
   color: #0f5faf;
+}
+
+.weather-toggle:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+  border-color: rgba(12, 139, 199, 0.35);
+}
+
+.topbar-btn {
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: #f7fbff;
+  color: #0f5faf;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.topbar-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+}
+
+.topbar-btn.icon-btn {
+  padding: 6px;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(12, 139, 199, 0.12);
+}
+
+.topbar-btn.icon-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .weather-panel {

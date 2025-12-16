@@ -44,7 +44,7 @@
   "weatherUnavailable": "Weer niet beschikbaar",
   "weatherWind": "Wind",
   "weatherPrecip": "Regen",
-  "weatherNextHours": "Volgende {hours} uur",
+  "weatherNextHours": "Verwachting",
   "weatherPrev": "Vorige",
   "weatherNext": "Volgende",
   "closeLabel": "Sluiten",
