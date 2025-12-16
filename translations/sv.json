@@ -49,5 +49,12 @@
   "weatherNext": "Nästa",
   "closeLabel": "Stäng",
   "countdownStartsIn": "Startar om",
-  "countdownStartAt": "Start: {time}"
+  "countdownStartAt": "Start: {time}",
+  "countdownOverlayHeading": "Eventet startar snart",
+  "countdownOverlayDismiss": "Stäng för nu",
+  "countdownOverlayNever": "Visa inte igen",
+  "debugTimeLabel": "Debugtid",
+  "debugTimeApply": "Använd",
+  "debugTimeTicking": "Tickande",
+  "debugTimeFrozen": "Fryst"
 }

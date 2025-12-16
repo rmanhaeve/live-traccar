@@ -49,5 +49,12 @@
   "weatherNext": "Volgende",
   "closeLabel": "Sluiten",
   "countdownStartsIn": "Begint over",
-  "countdownStartAt": "Start: {time}"
+  "countdownStartAt": "Start: {time}",
+  "countdownOverlayHeading": "Evenement begint binnenkort",
+  "countdownOverlayDismiss": "Sluit voor nu",
+  "countdownOverlayNever": "Niet meer tonen",
+  "debugTimeLabel": "Debugtijd",
+  "debugTimeApply": "Toepassen",
+  "debugTimeTicking": "Tikkend",
+  "debugTimeFrozen": "Bevroren"
 }

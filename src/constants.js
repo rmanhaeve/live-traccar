@@ -72,6 +72,13 @@ export const DEFAULT_TEXTS = {
   descent: "Descent",
   countdownStartsIn: "Starts in",
   countdownStartAt: "Start: {time}",
+  countdownOverlayHeading: "Event starts soon",
+  countdownOverlayDismiss: "Close for now",
+  countdownOverlayNever: "Don't show this again",
+  debugTimeLabel: "Debug time",
+  debugTimeApply: "Apply",
+  debugTimeTicking: "Ticking",
+  debugTimeFrozen: "Frozen",
 };
 
 export const TRANSLATIONS_MAP = {

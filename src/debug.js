@@ -1,5 +1,6 @@
 import { pointAtDistance, getRoutePoints, getRouteTotal } from "./route.js";
 import { getAverageSpeedMs, getRecentHeading } from "./stats.js";
+import { getNowDate, getNowMs } from "./time.js";
 
 const DEBUG_DEVICE_IDS = [10001, 10002, 10003, 10004, 10005];
 const DEBUG_JITTER_METERS = 5;
@@ -67,7 +68,7 @@ export function buildDebugPositions(
 ) {
   const total = routeTotalOverride || getRouteTotal() || 0;
   const points = routePointsOverride || getRoutePoints() || [];
-  const nowMs = Date.now();
+  const nowMs = getNowMs();
   const speedKph = config?.expectedAvgSpeedKph ?? 60;
   const speedMs = Math.max(speedKph / 3.6, 0);
   const baseStartMs = parseStartMs(config, nowMs);
@@ -128,6 +129,6 @@ export function installDebugInfoHook({
       const speedMs = getAverageSpeedMs(positionsHistory, id, activeStartTimes);
       return { id, pos, proj, heading, speedMs, historySamples: hist.length };
     });
-    return { ts: new Date().toISOString(), devices: devicesInfo, routePoints: getRoutePoints().length };
+    return { ts: getNowDate().toISOString(), devices: devicesInfo, routePoints: getRoutePoints().length };
   };
 }

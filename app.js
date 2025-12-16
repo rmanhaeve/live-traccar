@@ -49,6 +49,15 @@ import {
   updateHelpContent,
   refreshHistoryOverlay,
 } from "./src/visualization.js";
+import {
+  clearNowOverride,
+  getNowDate,
+  getNowMs,
+  getOverrideTicking,
+  hasNowOverride,
+  setNowOverride,
+  setOverrideTicking,
+} from "./src/time.js";
 
 const statusEl = document.getElementById("status");
 const titleEl = document.getElementById("title");
@@ -56,6 +65,19 @@ const countdownEl = document.getElementById("countdown");
 const countdownLabelEl = document.getElementById("countdown-label");
 const countdownTimeEl = document.getElementById("countdown-time");
 const countdownStartEl = document.getElementById("countdown-start");
+const countdownOverlayEl = document.getElementById("countdown-overlay");
+const countdownOverlayLabelEl = document.getElementById("countdown-overlay-label");
+const countdownOverlayTimeEl = document.getElementById("countdown-overlay-time");
+const countdownOverlayStartEl = document.getElementById("countdown-overlay-start");
+const countdownOverlayCloseEl = document.getElementById("countdown-overlay-close");
+const countdownOverlayDismissEl = document.getElementById("countdown-overlay-dismiss");
+const countdownOverlayNeverEl = document.getElementById("countdown-overlay-never");
+const debugTimeWrapEl = document.getElementById("debug-time");
+const debugTimeInputEl = document.getElementById("debug-time-input");
+const debugTimeApplyEl = document.getElementById("debug-time-apply");
+const debugTimeToggleEl = document.getElementById("debug-time-toggle");
+const debugTimeToggleStateEl = document.getElementById("debug-time-toggle-state");
+const debugTimeLabelEl = document.getElementById("debug-time-label");
 let config = { ...DEFAULT_CONFIG };
 let texts = { ...DEFAULT_TEXTS };
 let currentLanguage = "en";
@@ -84,6 +106,11 @@ const weatherCache = new Map();
 const DEFAULT_HISTORY_HOURS = 24;
 let initialSelectedDeviceId = null;
 let eventStartMs = null;
+let countdownOverlayDismissed = false;
+const COUNTDOWN_OVERLAY_PREF = "hideCountdownOverlay";
+let initialTimeOverrideMs = null;
+let initialTimeOverrideTicking = true;
+let mapViewPreference = null;
 
 function getHistoryRetentionMs() {
   const hours = Number(config?.historyHours ?? DEFAULT_HISTORY_HOURS);
@@ -111,7 +138,37 @@ function parseBoolParam(params, key) {
 function applyUrlOverrides() {
   const params = new URLSearchParams(window.location.search);
   const debugParam = parseBoolParam(params, "debug");
-  config.debug = debugParam === null ? false : debugParam;
+  if (debugParam !== null) {
+    config.debug = debugParam;
+  }
+  const timeParam = params.get("debugTime");
+  if (timeParam) {
+    const parsed = Number.isFinite(Number(timeParam)) ? Number(timeParam) : Date.parse(timeParam);
+    if (Number.isFinite(parsed)) initialTimeOverrideMs = parsed;
+  }
+  const freezeParam = parseBoolParam(params, "debugTimeFreeze");
+  if (freezeParam !== null) {
+    initialTimeOverrideTicking = !freezeParam;
+    if (!timeParam && freezeParam) {
+      initialTimeOverrideMs = Date.now();
+    }
+  }
+}
+
+function normalizeDebugTimeParamIfNeeded() {
+  const params = new URLSearchParams(window.location.search);
+  const debugParam = parseBoolParam(params, "debug");
+  const isDebug = debugParam === null ? Boolean(config?.debug) : debugParam;
+  if (!isDebug) return false;
+  const timeParam = params.get("debugTime");
+  if (!timeParam) {
+    const nowIso = new Date().toISOString();
+    params.set("debugTime", nowIso);
+    const next = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+    window.location.replace(next);
+    return true;
+  }
+  return false;
 }
 
 function t(key, vars = {}) {
@@ -131,7 +188,7 @@ function formatTimeLabel(timeStr) {
   if (!timeStr) return "";
   const d = new Date(timeStr);
   if (Number.isNaN(d.getTime())) return "";
-  const today = new Date();
+  const today = getNowDate();
   const sameDay =
     d.getFullYear() === today.getFullYear() &&
     d.getMonth() === today.getMonth() &&
@@ -182,6 +239,108 @@ function getExpectedSpeedMs() {
   return config.expectedAvgSpeedKph / 3.6;
 }
 
+function shouldHideCountdownOverlay() {
+  const prefs = readPreferences();
+  return Boolean(prefs?.[COUNTDOWN_OVERLAY_PREF]);
+}
+
+function hideCountdownOverlay({ persist = false } = {}) {
+  if (persist) persistPreferences({ [COUNTDOWN_OVERLAY_PREF]: true });
+  countdownOverlayDismissed = true;
+  if (countdownOverlayEl) countdownOverlayEl.classList.add("hidden");
+}
+
+function updateCountdownOverlayCopy() {
+  if (countdownOverlayLabelEl) countdownOverlayLabelEl.textContent = t("countdownOverlayHeading");
+  if (countdownOverlayDismissEl) countdownOverlayDismissEl.textContent = t("countdownOverlayDismiss");
+  if (countdownOverlayNeverEl) countdownOverlayNeverEl.textContent = t("countdownOverlayNever");
+}
+
+function formatDatetimeLocalValue(ms) {
+  if (!Number.isFinite(ms)) return "";
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const min = pad(d.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+}
+
+function updateDebugTimeTexts() {
+  if (debugTimeLabelEl) debugTimeLabelEl.textContent = t("debugTimeLabel");
+  if (debugTimeApplyEl) debugTimeApplyEl.textContent = t("debugTimeApply");
+  if (debugTimeToggleStateEl) {
+    const ticking = debugTimeToggleEl ? debugTimeToggleEl.checked : getOverrideTicking();
+    debugTimeToggleStateEl.textContent = ticking === false ? t("debugTimeFrozen") : t("debugTimeTicking");
+  }
+}
+
+function setDebugTimeInputValue(ms) {
+  if (!debugTimeInputEl) return;
+  debugTimeInputEl.value = formatDatetimeLocalValue(ms);
+}
+
+function updateUrlDebugTimeParams({ timeMs, ticking } = {}) {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("debug") && !config?.debug) return;
+  if (Number.isFinite(timeMs)) {
+    params.set("debugTime", new Date(timeMs).toISOString());
+  } else {
+    params.delete("debugTime");
+  }
+  if (typeof ticking === "boolean") {
+    params.set("debugTimeFreeze", ticking ? "false" : "true");
+  }
+  const next = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+  window.history.replaceState({}, "", next);
+}
+
+function applyDebugTimeOverride(ms) {
+  if (!config?.debug) {
+    clearNowOverride();
+    return;
+  }
+  if (!Number.isFinite(ms)) {
+    clearNowOverride();
+    setDebugTimeInputValue(null);
+    const ticking = debugTimeToggleEl ? debugTimeToggleEl.checked : true;
+    if (!ticking) {
+      setNowOverride(Date.now(), { ticking: false });
+    }
+  } else {
+    const ticking = debugTimeToggleEl ? debugTimeToggleEl.checked : true;
+    setNowOverride(ms, { ticking });
+    setDebugTimeInputValue(ms);
+  }
+  updateUrlDebugTimeParams({ timeMs: Number.isFinite(ms) ? ms : null, ticking: debugTimeToggleEl ? debugTimeToggleEl.checked : null });
+  countdownOverlayDismissed = false;
+  refreshCountdownTimer();
+  refreshWeather(true).catch((err) => console.error(err));
+  if (config?.debug) {
+    refreshPositions().catch((err) => console.error(err));
+  }
+}
+
+function restoreDebugTimeOverride() {
+  if (!config?.debug) {
+    clearNowOverride();
+    setDebugTimeInputValue(null);
+    return false;
+  }
+  if (Number.isFinite(initialTimeOverrideMs)) {
+    setNowOverride(initialTimeOverrideMs, { ticking: initialTimeOverrideTicking });
+    setDebugTimeInputValue(initialTimeOverrideMs);
+    if (debugTimeToggleEl) debugTimeToggleEl.checked = Boolean(initialTimeOverrideTicking);
+    return true;
+  }
+  clearNowOverride();
+  setDebugTimeInputValue(null);
+  return false;
+}
+
 function stopCountdownTimer() {
   if (countdownTimer) {
     clearInterval(countdownTimer);
@@ -190,26 +349,29 @@ function stopCountdownTimer() {
 }
 
 function renderCountdown() {
-  if (!countdownEl) return;
   const startMs = getEventStartMs();
   if (!startMs) {
     if (countdownLabelEl) countdownLabelEl.textContent = "";
     if (countdownTimeEl) countdownTimeEl.textContent = "";
     if (countdownStartEl) countdownStartEl.textContent = "";
-    countdownEl.classList.add("hidden");
+    if (countdownEl) countdownEl.classList.add("hidden");
+    if (countdownOverlayTimeEl) countdownOverlayTimeEl.textContent = "";
+    if (countdownOverlayStartEl) countdownOverlayStartEl.textContent = "";
+    if (countdownOverlayEl) countdownOverlayEl.classList.add("hidden");
     stopCountdownTimer();
     return;
   }
-  const diff = startMs - Date.now();
+  const diff = startMs - getNowMs();
   if (diff <= 0) {
     if (countdownLabelEl) countdownLabelEl.textContent = "";
     if (countdownTimeEl) countdownTimeEl.textContent = "";
     if (countdownStartEl) countdownStartEl.textContent = "";
-    countdownEl.classList.add("hidden");
+    if (countdownEl) countdownEl.classList.add("hidden");
+    if (countdownOverlayEl) countdownOverlayEl.classList.add("hidden");
     stopCountdownTimer();
     return;
   }
-  countdownEl.classList.remove("hidden");
+  if (countdownEl) countdownEl.classList.remove("hidden");
   if (countdownLabelEl) countdownLabelEl.textContent = t("countdownStartsIn");
   if (countdownTimeEl) countdownTimeEl.textContent = formatCountdownMs(diff);
   if (countdownStartEl) {
@@ -217,13 +379,32 @@ function renderCountdown() {
       time: formatDateTimeFull(new Date(startMs)),
     });
   }
+  renderCountdownOverlay(startMs, diff);
+}
+
+function renderCountdownOverlay(startMs, diff) {
+  if (!countdownOverlayEl) return;
+  const shouldShow =
+    Number.isFinite(startMs) &&
+    diff > 0 &&
+    !countdownOverlayDismissed &&
+    !shouldHideCountdownOverlay();
+  countdownOverlayEl.classList.toggle("hidden", !shouldShow);
+  if (!shouldShow) return;
+  if (countdownOverlayTimeEl) countdownOverlayTimeEl.textContent = formatCountdownMs(diff);
+  if (countdownOverlayStartEl) {
+    countdownOverlayStartEl.textContent = t("countdownStartAt", {
+      time: formatDateTimeFull(new Date(startMs)),
+    });
+  }
+  updateCountdownOverlayCopy();
 }
 
 function refreshCountdownTimer() {
   stopCountdownTimer();
   renderCountdown();
   const startMs = getEventStartMs();
-  if (startMs && startMs > Date.now()) {
+  if (startMs && startMs > getNowMs()) {
     countdownTimer = setInterval(renderCountdown, 1000);
   }
 }
@@ -284,6 +465,36 @@ function persistPanels(partial) {
   persistPreferences({ panels: merged });
 }
 
+function getMapViewPreference() {
+  if (mapViewPreference) return mapViewPreference;
+  const prefs = readPreferences();
+  const mv = prefs?.mapView;
+  if (
+    mv &&
+    typeof mv === "object" &&
+    Number.isFinite(mv.lat) &&
+    Number.isFinite(mv.lng) &&
+    Number.isFinite(mv.zoom)
+  ) {
+    mapViewPreference = { lat: mv.lat, lng: mv.lng, zoom: mv.zoom };
+    return mapViewPreference;
+  }
+  return null;
+}
+
+function persistMapViewPreference(view) {
+  if (
+    !view ||
+    !Number.isFinite(view.lat) ||
+    !Number.isFinite(view.lng) ||
+    !Number.isFinite(view.zoom)
+  ) {
+    return;
+  }
+  mapViewPreference = { lat: view.lat, lng: view.lng, zoom: view.zoom };
+  persistPreferences({ mapView: mapViewPreference });
+}
+
 function persistToggles() {
   persistPreferences({
     toggles: {
@@ -335,7 +546,7 @@ function isStale(deviceId) {
   if (!minutes || minutes <= 0) return false;
   const ts = lastSeen.get(deviceId);
   if (!ts) return false;
-  const ageMs = Date.now() - new Date(ts).getTime();
+  const ageMs = getNowMs() - new Date(ts).getTime();
   return Number.isFinite(ageMs) && ageMs > minutes * 60 * 1000;
 }
 
@@ -418,6 +629,8 @@ async function loadTranslations(preferredLang) {
   renderLegend();
   renderWaypoints();
   renderToggles();
+  updateCountdownOverlayCopy();
+  updateDebugTimeTexts();
   renderCountdown();
 }
 
@@ -431,6 +644,81 @@ function initLangSelector() {
     renderToggles();
   });
   updateLangSelector();
+}
+
+function setupCountdownOverlay() {
+  if (countdownOverlayCloseEl) {
+    countdownOverlayCloseEl.addEventListener("click", () => hideCountdownOverlay());
+  }
+  if (countdownOverlayDismissEl) {
+    countdownOverlayDismissEl.addEventListener("click", () => hideCountdownOverlay());
+  }
+  if (countdownOverlayNeverEl) {
+    countdownOverlayNeverEl.addEventListener("click", () => hideCountdownOverlay({ persist: true }));
+  }
+  updateCountdownOverlayCopy();
+}
+
+function setupDebugTimeControls() {
+  if (!debugTimeWrapEl) return;
+  const show = Boolean(config?.debug);
+  debugTimeWrapEl.classList.toggle("hidden", !show);
+  updateDebugTimeTexts();
+  if (!show) {
+    clearNowOverride();
+    return;
+  }
+  const restored = restoreDebugTimeOverride();
+  if (restored) {
+    updateUrlDebugTimeParams({
+      timeMs: Number.isFinite(initialTimeOverrideMs) ? initialTimeOverrideMs : null,
+      ticking: initialTimeOverrideTicking,
+    });
+    refreshCountdownTimer();
+    refreshWeather(true).catch((err) => console.error(err));
+    if (config?.debug) {
+      refreshPositions().catch((err) => console.error(err));
+    }
+  }
+  if (debugTimeApplyEl) {
+    debugTimeApplyEl.addEventListener("click", () => {
+      const raw = debugTimeInputEl?.value;
+      if (!raw) {
+        applyDebugTimeOverride(NaN);
+        updateDebugTimeTexts();
+        return;
+      }
+      const parsed = Date.parse(raw);
+      if (!Number.isFinite(parsed)) return;
+      applyDebugTimeOverride(parsed);
+      updateDebugTimeTexts();
+    });
+  }
+  if (debugTimeToggleEl) {
+    debugTimeToggleEl.addEventListener("change", () => {
+      const ticking = debugTimeToggleEl.checked;
+      if (hasNowOverride()) {
+        setNowOverride(getNowMs(), { ticking });
+      } else if (!ticking) {
+        setNowOverride(Date.now(), { ticking: false });
+        setDebugTimeInputValue(Date.now());
+      } else {
+        clearNowOverride();
+        setDebugTimeInputValue(null);
+      }
+      updateUrlDebugTimeParams({
+        timeMs: hasNowOverride() ? getNowMs() : null,
+        ticking,
+      });
+      updateDebugTimeTexts();
+      countdownOverlayDismissed = false;
+      refreshCountdownTimer();
+      refreshWeather(true).catch((err) => console.error(err));
+      if (config?.debug) {
+        refreshPositions().catch((err) => console.error(err));
+      }
+    });
+  }
 }
 
 function updateLangSelector() {
@@ -691,7 +979,7 @@ function getWeatherPlan(deviceId, hours = WEATHER_PAGE_SIZE, offsetHours = 0) {
   const total = getRouteTotal() || 0;
   const progress = deviceId ? getDeviceProgress(deviceId) : null;
   const startMs = getEventStartMs();
-  const now = Date.now();
+  const now = getNowMs();
   const baseTime = startMs && startMs > now ? startMs : now;
   if (progress && !progress.offtrack && progress.proj?.distanceAlong != null) {
     const speedMs = getAverageSpeedForDevice(deviceId) || getExpectedSpeedMs();
@@ -746,7 +1034,7 @@ async function refreshWeather(
   if (weatherState.pending) return null;
   const cacheKey = getWeatherCacheKey(deviceId, hours, offsetHours);
   const cached = weatherCache.get(cacheKey);
-  if (!force && cached && Date.now() - cached.lastFetch < WEATHER_STALE_MS) {
+  if (!force && cached && getNowMs() - cached.lastFetch < WEATHER_STALE_MS) {
     renderWeatherSummary(cached.data);
     if (weatherUpdatedEl) {
       weatherUpdatedEl.textContent = new Date(cached.lastFetch).toLocaleTimeString([], {
@@ -764,12 +1052,12 @@ async function refreshWeather(
   if (weatherForecastEl) weatherForecastEl.textContent = t("weatherFetching");
   try {
     const data = await fetchWeatherSeries(deviceId, hours, offsetHours);
-    const entry = { data, lastFetch: Date.now() };
+    const entry = { data, lastFetch: getNowMs() };
     weatherCache.set(cacheKey, entry);
     renderWeatherSummary(entry.data);
     renderWeatherForecast(entry.data);
     if (weatherUpdatedEl) {
-      weatherUpdatedEl.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      weatherUpdatedEl.textContent = getNowDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
     return entry.data;
   } catch (err) {
@@ -878,7 +1166,7 @@ async function refreshDevices() {
 async function fetchRecentHistoryForDevice(deviceId) {
   if (!config?.traccarUrl || !config?.token) return;
   if (!filterDevice(deviceId)) return;
-  const now = new Date();
+  const now = getNowDate();
   const from = new Date(now.getTime() - getHistoryRetentionMs());
   const data = await fetchRecentHistory(config, deviceId, from, now);
   const startMs = getEventStartMs();
@@ -906,7 +1194,7 @@ function updatePositionHistory(deviceId, coords, timeMs) {
   if (startMs && timeMs < startMs) return;
   const list = positionsHistory.get(deviceId) || [];
   list.push({ t: timeMs, lat: coords[0], lng: coords[1] });
-  const cutoff = Date.now() - getHistoryRetentionMs();
+  const cutoff = getNowMs() - getHistoryRetentionMs();
   while (list.length && list[0].t < cutoff) list.shift();
   positionsHistory.set(deviceId, list);
 }
@@ -932,7 +1220,7 @@ function updateWaypointEvent(entry, wp, prevDist, currDist, prevTime, currTime) 
     prevDist < low &&
     currDist > high;
   if (!entry.enterMs && (currIn || crossed)) {
-    entry.enterMs = prevTime ?? currTime ?? Date.now();
+    entry.enterMs = prevTime ?? currTime ?? getNowMs();
   }
   if (entry.enterMs && !entry.leaveMs && ((prevIn && !currIn && Number.isFinite(currDist) && currDist > high) || crossed)) {
     entry.leaveMs = currTime ?? prevTime ?? entry.enterMs;
@@ -1057,12 +1345,12 @@ function handlePosition(position) {
   const prevProj = lastProjection.get(position.deviceId);
   lastPositions.set(position.deviceId, position);
   if (position.projHintDistanceAlong != null) {
-    const t = timeMs || Date.now();
+    const t = timeMs || getNowMs();
     lastProjection.set(position.deviceId, { distanceAlong: position.projHintDistanceAlong, t });
   }
   if (timeMs) updatePositionHistory(position.deviceId, coords, timeMs);
   const prog = getDeviceProgress(position.deviceId);
-  markActiveOnRoute(position.deviceId, prog, activeStartTimes, timeMs || Date.now(), positionsHistory);
+  markActiveOnRoute(position.deviceId, prog, activeStartTimes, timeMs || getNowMs(), positionsHistory);
   if (timeMs) recordProgressEvents(position.deviceId, prevProj, prog?.proj, timeMs);
   updateMarker(position);
   refreshHistoryOverlay(position.deviceId);
@@ -1134,6 +1422,8 @@ function setupUiBindings() {
     persistToggles,
     persistPanels,
     getPanelPreferences,
+    getMapViewPreference,
+    persistMapViewPreference,
     devices,
     lastSeen,
     lastPositions,
@@ -1144,11 +1434,14 @@ async function bootstrap() {
   setupUiBindings();
   initMap();
   initContextMenu();
+  setupCountdownOverlay();
   await loadConfig();
+  if (normalizeDebugTimeParamIfNeeded()) return;
   initLangSelector();
   setupWeatherWidget();
   initDownloadButton();
   await loadTranslations();
+  setupDebugTimeControls();
   await loadRoute();
   await startPolling();
   vizStartViewerLocation();

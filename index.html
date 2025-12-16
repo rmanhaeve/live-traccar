@@ -17,6 +17,15 @@
       <div id="countdown-start" class="countdown-start"></div>
     </div>
     <div class="topbar-actions">
+      <div id="debug-time" class="debug-time hidden">
+        <label id="debug-time-label" class="debug-time-label" for="debug-time-input"></label>
+        <input id="debug-time-input" class="debug-time-input" type="datetime-local">
+        <button id="debug-time-apply" class="debug-time-btn" type="button"></button>
+        <label class="debug-time-toggle" for="debug-time-toggle">
+          <input id="debug-time-toggle" class="debug-time-toggle-input" type="checkbox" checked>
+          <span id="debug-time-toggle-state" class="debug-time-toggle-state"></span>
+        </label>
+      </div>
       <div id="weather-widget" class="weather-widget">
         <button id="weather-toggle" class="topbar-btn weather-toggle" type="button">
           <span id="weather-summary" class="weather-summary"></span>
@@ -46,6 +55,19 @@
     <div id="map"></div>
     <div id="help-trigger" class="help-trigger">?</div>
   </main>
+
+  <div id="countdown-overlay" class="countdown-overlay hidden" role="dialog" aria-modal="true">
+    <div class="countdown-overlay-card">
+      <button id="countdown-overlay-close" class="countdown-overlay-close" type="button" aria-label="Close countdown overlay">×</button>
+      <div id="countdown-overlay-label" class="countdown-overlay-label"></div>
+      <div id="countdown-overlay-time" class="countdown-overlay-time"></div>
+      <div id="countdown-overlay-start" class="countdown-overlay-start"></div>
+      <div class="countdown-overlay-actions">
+        <button id="countdown-overlay-dismiss" class="countdown-overlay-btn primary" type="button"></button>
+        <button id="countdown-overlay-never" class="countdown-overlay-btn ghost" type="button"></button>
+      </div>
+    </div>
+  </div>
 
   <script src="vendor/leaflet/leaflet.js"></script>
   <script type="module" src="app.js"></script>

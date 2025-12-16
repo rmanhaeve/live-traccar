@@ -1,6 +1,7 @@
 import { getRouteDistances, getRoutePoints } from "./route.js";
 import { ACTIVE_DISTANCE_THRESHOLD, KM_MARKER_BASE_KM } from "./constants.js";
 import { computeElevationTotals } from "./stats.js";
+import { getNowMs } from "./time.js";
 
 const colors = [
   "#ef4444",
@@ -412,6 +413,8 @@ export function setupVisualization(deps) {
   state.persistToggles = deps.persistToggles;
   state.persistPanels = deps.persistPanels || (() => {});
   state.getPanelPreferences = deps.getPanelPreferences || (() => ({}));
+  state.getMapViewPreference = deps.getMapViewPreference || (() => null);
+  state.persistMapViewPreference = deps.persistMapViewPreference || (() => {});
   state.devices = deps.devices;
   state.lastSeen = deps.lastSeen;
   state.lastPositions = deps.lastPositions;
@@ -497,7 +500,7 @@ function showHistoryOverlay(deviceId, { collapsedSections = {}, scrollTop = 0 } 
   titleText.textContent = state.t("historyTitle");
   const updated = document.createElement("span");
   updated.className = "history-updated";
-  updated.textContent = `(${state.t("historyUpdated")} ${formatTimeOnly(Date.now())})`;
+  updated.textContent = `(${state.t("historyUpdated")} ${formatTimeOnly(getNowMs())})`;
   title.append(titleText, updated);
   const close = document.createElement("button");
   close.className = "history-close";
@@ -703,7 +706,11 @@ export function refreshHistoryOverlay(deviceId = null) {
 }
 
 export function initMap() {
-  state.map = L.map("map", { worldCopyJump: true }).setView([0, 0], 2);
+  const savedView = state.getMapViewPreference ? state.getMapViewPreference() : null;
+  const center = savedView ? [savedView.lat, savedView.lng] : [0, 0];
+  const zoom = savedView?.zoom ?? 2;
+  state.autoFit = !savedView;
+  state.map = L.map("map", { worldCopyJump: true }).setView(center, zoom);
   state.map.createPane("tracksPane");
   state.map.getPane("tracksPane").style.zIndex = "400";
   state.map.createPane("kmPane");
@@ -733,6 +740,16 @@ export function initMap() {
   state.map.on("zoomend", rebuildKmMarkers);
   state.map.on("movestart", () => {
     state.autoFit = false;
+  });
+  state.map.on("moveend", () => {
+    const view = state.map.getCenter();
+    const z = state.map.getZoom();
+    state.persistMapViewPreference({ lat: view.lat, lng: view.lng, zoom: z });
+  });
+  state.map.on("zoomend", () => {
+    const view = state.map.getCenter();
+    const z = state.map.getZoom();
+    state.persistMapViewPreference({ lat: view.lat, lng: view.lng, zoom: z });
   });
   state.map.on("contextmenu", (e) => {
     e.originalEvent.preventDefault();
