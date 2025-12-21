@@ -9,6 +9,17 @@ const HINT_TOLERANCE_METERS = 150;
 const HINT_PENALTY_PER_METER = 0.2;
 const HEADING_PENALTY_METERS = 30;
 
+let cacheTrack = new Map();
+const CACHE_TRACK_MAX_ENTRIES = 10000;
+
+function makeCacheKey(latlng, opts) {
+  const lat = Number(latlng?.lat);
+  const lng = Number(latlng?.lng);
+  const hint = Number.isFinite(opts?.hintDistanceAlong) ? opts.hintDistanceAlong : "";
+  const heading = Number.isFinite(opts?.headingDeg) ? opts.headingDeg : "";
+  return `${lat}:${lng}:${hint}:${heading}`;
+}
+
 export function parseGpx(xmlText) {
   const xml = new DOMParser().parseFromString(xmlText, "application/xml");
   const error =
@@ -87,6 +98,7 @@ export function buildRouteProfile(segments) {
     a._segAngle = Math.atan2(dy, dx);
     a._segLen2 = dx * dx + dy * dy;
   }
+  cacheTrack.clear();
 }
 
 export function pointAtDistance(distanceAlong) {
@@ -104,6 +116,10 @@ export function pointAtDistance(distanceAlong) {
 }
 
 export function matchPositionToRoute(latlng, opts = {}) {
+  const key = makeCacheKey(latlng, opts);
+  if (cacheTrack.has(key)) {
+    return cacheTrack.get(key);
+  }
   if (!routePoints.length) return null;
   const refLat = routeAvgLat || latlng.lat;
   const rad = Math.PI / 180;
@@ -158,7 +174,13 @@ export function matchPositionToRoute(latlng, opts = {}) {
   });
   const best = candidates[0];
   const offtrack = Math.sqrt(best.d2) > 200;
-  return { dist2: best.d2, distanceAlong: best.segDist, point: best.point, offtrack };
+  const result = { dist2: best.d2, distanceAlong: best.segDist, point: best.point, offtrack };
+  cacheTrack.set(key, result);
+  if (cacheTrack.size > CACHE_TRACK_MAX_ENTRIES) {
+    const firstKey = cacheTrack.keys().next().value;
+    cacheTrack.delete(firstKey);
+  }
+  return result;
 }
 
 export function projectOnRoute(latlng) {
