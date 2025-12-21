@@ -9,6 +9,10 @@ const HINT_TOLERANCE_METERS = 150;
 const HINT_PENALTY_PER_METER = 0.2;
 const HEADING_PENALTY_METERS = 30;
 
+// Cache for GPS point to route mapping
+const MAX_CACHE_SIZE = 1000;
+let matchCache = new Map();
+
 export function parseGpx(xmlText) {
   const xml = new DOMParser().parseFromString(xmlText, "application/xml");
   const error =
@@ -56,6 +60,7 @@ export function buildRouteProfile(segments) {
   routeElevations = [];
   routeAvgLat = 0;
   routeTotal = 0;
+  matchCache.clear(); // Clear cache when route changes
   segments.forEach((seg) => {
     seg.forEach((pt) => routePoints.push({ lat: pt[0], lng: pt[1], ele: Number.isFinite(pt[2]) ? pt[2] : null }));
   });
@@ -105,6 +110,25 @@ export function pointAtDistance(distanceAlong) {
 
 export function matchPositionToRoute(latlng, opts = {}) {
   if (!routePoints.length) return null;
+  
+  // Create cache key from input parameters
+  // Round coordinates to 6 decimal places (~0.1m precision)
+  // Round hint to nearest meter, heading to nearest degree
+  const latKey = Math.round(latlng.lat * 1e6);
+  const lngKey = Math.round(latlng.lng * 1e6);
+  const hintKey = opts.hintDistanceAlong != null ? Math.round(opts.hintDistanceAlong) : null;
+  const headingKey = Number.isFinite(opts.headingDeg) ? Math.round(opts.headingDeg) : null;
+  const cacheKey = `${latKey},${lngKey},${hintKey},${headingKey}`;
+  
+  // Check cache
+  if (matchCache.has(cacheKey)) {
+    const cached = matchCache.get(cacheKey);
+    // Move to end for LRU (delete and re-add)
+    matchCache.delete(cacheKey);
+    matchCache.set(cacheKey, cached);
+    return cached;
+  }
+  
   const refLat = routeAvgLat || latlng.lat;
   const rad = Math.PI / 180;
   const R = 6371000;
@@ -158,7 +182,17 @@ export function matchPositionToRoute(latlng, opts = {}) {
   });
   const best = candidates[0];
   const offtrack = Math.sqrt(best.d2) > 200;
-  return { dist2: best.d2, distanceAlong: best.segDist, point: best.point, offtrack };
+  const result = { dist2: best.d2, distanceAlong: best.segDist, point: best.point, offtrack };
+  
+  // Store in cache with LRU eviction
+  if (matchCache.size >= MAX_CACHE_SIZE) {
+    // Delete oldest entry (first in Map)
+    const firstKey = matchCache.keys().next().value;
+    matchCache.delete(firstKey);
+  }
+  matchCache.set(cacheKey, result);
+  
+  return result;
 }
 
 export function projectOnRoute(latlng) {

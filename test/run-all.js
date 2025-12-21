@@ -1,6 +1,7 @@
 const tests = [
   "./test-geo.js",
   "./test-route.js",
+  "./test-cache.js",
   "./test-stats.js",
   "./test-traccar.js",
   "./test-matcher.js",
