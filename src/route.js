@@ -116,11 +116,11 @@ export function pointAtDistance(distanceAlong) {
 }
 
 export function matchPositionToRoute(latlng, opts = {}) {
+  if (!routePoints.length) return null;
   const key = makeCacheKey(latlng, opts);
   if (cacheTrack.has(key)) {
     return cacheTrack.get(key);
   }
-  if (!routePoints.length) return null;
   const refLat = routeAvgLat || latlng.lat;
   const rad = Math.PI / 180;
   const R = 6371000;
