@@ -1,0 +1,12 @@
+{
+  "participants": [
+    {
+      "name": "Rider 1",
+      "phone": "+31612345678"
+    },
+    {
+      "name": "Rider 2",
+      "phone": "+31623456789"
+    }
+  ]
+}

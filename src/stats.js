@@ -1,5 +1,5 @@
 import { ACTIVE_DISTANCE_THRESHOLD, HISTORY_WINDOW_MS } from "./constants.js";
-import { distanceMeters, toRad } from "./geo.js";
+import { toRad } from "./geo.js";
 import { getRouteTotal, projectOnRoute, projectOnRouteWithHint } from "./route.js";
 import { getNowMs } from "./time.js";
 
@@ -23,19 +23,31 @@ function summarizeSpeeds(samples) {
   const speeds = [];
   let totalDist = 0;
   let totalTimeMs = 0;
+  let hint = null;
   for (let i = 1; i < samples.length; i += 1) {
-    const prev = samples[i - 1];
     const curr = samples[i];
+    const prev = samples[i - 1];
     if (!prev || !curr) continue;
     const spanMs = (curr.t || 0) - (prev.t || 0);
     if (!Number.isFinite(spanMs) || spanMs <= 0) continue;
-    const segDist = distanceMeters([prev.lat, prev.lng], [curr.lat, curr.lng]);
+    const prevProjection = projectOnRouteWithHint({ lat: prev.lat, lng: prev.lng }, hint);
+    if (!prevProjection || prevProjection.offtrack) {
+      hint = null;
+      continue;
+    }
+    const currProj = projectOnRouteWithHint({ lat: curr.lat, lng: curr.lng }, prevProjection.distanceAlong);
+    if (!currProj || currProj.offtrack || currProj.distanceAlong == null) {
+      hint = null;
+      continue;
+    }
+    const segDist = Math.abs(currProj.distanceAlong - prevProjection.distanceAlong);
     const segSpeed = segDist / (spanMs / 1000);
     if (Number.isFinite(segSpeed) && segSpeed >= 0) {
       speeds.push(segSpeed);
       totalDist += segDist;
       totalTimeMs += spanMs;
     }
+    hint = currProj.distanceAlong;
   }
   if (!speeds.length || totalTimeMs <= 0) return null;
   const averageMs = totalDist / (totalTimeMs / 1000);

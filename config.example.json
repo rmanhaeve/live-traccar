@@ -11,5 +11,24 @@
   "startTime": null,
   "debugStartTime": null,
   "expectedAvgSpeedKph": 60,
-  "historyHours": 24
+  "historyHours": 24,
+  "participantMapFile": "participants.json",
+  "pollSeconds": 30,
+  "offrouteThresholdMeters": 100,
+  "offrouteMessage": "{name} is off-route at {time}. Last location: {lat},{lng}",
+  "smsGateway": {
+    "baseUrl": "https://www.traccar.org/sms/",
+    "authorization": "REPLACE_WITH_SMS_GATEWAY_TOKEN",
+    "method": "POST",
+    "path": "/",
+    "headers": {
+      "Content-Type": "application/json",
+      "Authorization": "{authorization}"
+    },
+    "bodyFormat": "json",
+    "body": {
+      "to": "{phone}",
+      "message": "{message}"
+    }
+  }
 }

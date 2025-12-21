@@ -73,6 +73,21 @@ const state = {
   elevationTotals: null,
 };
 
+function formatBatteryValue(position) {
+  if (!position?.attributes) return null;
+  const rawLevel = Number(position.attributes.batteryLevel);
+  if (Number.isFinite(rawLevel)) return `${Math.round(rawLevel)}%`;
+  const rawVoltage = Number(position.attributes.battery);
+  if (Number.isFinite(rawVoltage)) return `${Math.round(rawVoltage * 10) / 10} V`;
+  return null;
+}
+
+function formatBatteryLabel(position) {
+  const value = formatBatteryValue(position);
+  if (!value) return null;
+  return `${state.t("battery")}: ${value}`;
+}
+
 function nextColor(idx) {
   return colors[idx % colors.length];
 }
@@ -1139,7 +1154,13 @@ export function updateMarker(position) {
     state.getSelectedDeviceId && state.getSelectedDeviceId() === position.deviceId
       ? `<br><button class="history-inline-btn" data-history-id="${position.deviceId}">${state.t("historyShow")}</button>`
       : "";
-  const content = `${name}${speed}${posLabel}<br><span class="muted">${state.formatDateTimeFull(time) || ""}</span>${showHistoryBtn}`;
+  const batteryLabel = formatBatteryLabel(position);
+  const timeLabel = state.formatDateTimeFull(time) || "";
+  const metaParts = [];
+  if (batteryLabel) metaParts.push(batteryLabel);
+  if (timeLabel) metaParts.push(timeLabel);
+  const metaLine = metaParts.length ? `<br><span class="muted">${metaParts.join(" • ")}</span>` : "";
+  const content = `${name}${speed}${posLabel}${metaLine}${showHistoryBtn}`;
   const popup = marker.getPopup();
   if (popup) {
     popup.setContent(content);
