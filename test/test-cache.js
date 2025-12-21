@@ -4,6 +4,7 @@ import {
   matchPositionToRoute,
   projectOnRoute,
   projectOnRouteWithHint,
+  getMatchCacheStats,
 } from "../src/route.js";
 
 function buildSimpleRoute() {
@@ -97,5 +98,21 @@ const hintedLate = matchPositionToRoute(overlapPoint, { hintDistanceAlong: 330 }
 assert(noHint.distanceAlong < 200, "No hint should prefer early match");
 assert(hintedEarly.distanceAlong < 200, "Early hint should match early");
 assert(hintedLate.distanceAlong > 250, "Late hint should match late");
+
+// Test 10: Cache stats function
+buildSimpleRoute();
+let stats = getMatchCacheStats();
+assert.equal(stats.size, 0, "Cache should be empty after rebuild");
+assert.equal(stats.maxSize, 1000, "Max cache size should be 1000");
+
+matchPositionToRoute({ lat: 0.0001, lng: 0.0005 });
+stats = getMatchCacheStats();
+assert.equal(stats.size, 1, "Cache should have 1 entry");
+
+for (let i = 0; i < 50; i++) {
+  matchPositionToRoute({ lat: 0.0001 + i * 0.0001, lng: 0.0005 + i * 0.0001 });
+}
+stats = getMatchCacheStats();
+assert.ok(stats.size > 1 && stats.size <= 51, "Cache should have multiple entries");
 
 console.log("cache tests passed");
