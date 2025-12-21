@@ -116,7 +116,7 @@ export function matchPositionToRoute(latlng, opts = {}) {
   if (!routePoints.length) return null;
   
   // Create cache key from input parameters
-  // Round coordinates to 6 decimal places (~0.1m precision)
+  // Round coordinates to 6 decimal places (~0.11m precision at equator, varies by latitude)
   // Round hint to nearest meter, heading to nearest degree
   const latKey = Math.round(latlng.lat * 1e6);
   const lngKey = Math.round(latlng.lng * 1e6);

@@ -32,11 +32,11 @@ const withHint1 = matchPositionToRoute(point, { hintDistanceAlong: 100 });
 const withHint2 = matchPositionToRoute(point, { hintDistanceAlong: 100 });
 assert.deepEqual(withHint1, withHint2, "Cache should work with hints");
 
-// Test 3: Different hints should produce different results (cached separately)
+// Test 3: Different hints should produce different cache entries
 const hintA = matchPositionToRoute(point, { hintDistanceAlong: 50 });
 const hintB = matchPositionToRoute(point, { hintDistanceAlong: 200 });
-// These should be cached separately and may have different results
-assert(hintA !== hintB, "Different hints should be cached separately");
+// These should be cached separately - verify they're not the same object reference
+assert.notStrictEqual(hintA, hintB, "Different hints should create separate cache entries");
 
 // Test 4: Cache should work with heading
 const withHeading1 = matchPositionToRoute(point, { headingDeg: 90 });
