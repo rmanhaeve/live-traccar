@@ -23,6 +23,7 @@ const state = {
   config: null,
   t: (k) => k,
   computeEta: null,
+  getPointEta: null,
   getDeviceProgress: null,
   getAverageSpeedMs: null,
   getProgressHistory: null,
@@ -64,6 +65,7 @@ const state = {
   viewerMarker: null,
   viewerWatchId: null,
   contextMenuEl: null,
+  contextMenuRequestId: 0,
   helpPopupEl: null,
   longPressTimer: null,
   longPressPos: null,
@@ -413,6 +415,7 @@ export function setupVisualization(deps) {
   state.config = deps.config;
   state.t = deps.t;
   state.computeEta = deps.computeEta;
+  state.getPointEta = deps.getPointEta;
   state.getDeviceProgress = deps.getDeviceProgress;
   state.getAverageSpeedMs = deps.getAverageSpeedMs;
   state.getProgressHistory = deps.getProgressHistory || (() => null);
@@ -1260,15 +1263,34 @@ function showContextMenu(latlng, containerPoint) {
   const x = rect.left + (containerPoint?.x ?? 0);
   const y = rect.top + (containerPoint?.y ?? 0);
   state.contextMenuEl.innerHTML = "";
+  const requestId = ++state.contextMenuRequestId;
   if (state.getSelectedDeviceId() && getRoutePoints().length && state.projectOnRoute) {
     const targetProj = state.projectOnRoute(latlng);
     if (targetProj && !targetProj.offtrack) {
       const eta = state.computeEta ? state.computeEta(state.getSelectedDeviceId(), targetProj.distanceAlong) : null;
-      const info = document.createElement("div");
-      info.className = "context-info";
-      const etaText = formatEtaText(eta);
-      info.textContent = state.t("etaHere", { eta: etaText });
-      state.contextMenuEl.appendChild(info);
+      if (eta) {
+        const info = document.createElement("div");
+        info.className = "context-info";
+        const etaText = formatEtaText(eta);
+        info.textContent = state.t("etaHere", { eta: etaText });
+        state.contextMenuEl.appendChild(info);
+      } else if (state.getPointEta) {
+        const info = document.createElement("div");
+        info.className = "context-info";
+        info.textContent = state.t("etaHere", { eta: "..." });
+        state.contextMenuEl.appendChild(info);
+        state.getPointEta(state.getSelectedDeviceId(), latlng)
+          .then((payload) => {
+            if (state.contextMenuRequestId !== requestId || !info.isConnected) return;
+            const etaText = formatEtaText(payload?.eta);
+            info.textContent = state.t("etaHere", { eta: etaText });
+          })
+          .catch((err) => {
+            console.warn("ETA lookup failed", err);
+            if (state.contextMenuRequestId !== requestId || !info.isConnected) return;
+            info.textContent = state.t("etaHere", { eta: formatEtaText(null) });
+          });
+      }
     }
   }
   const items = [

@@ -1160,6 +1160,7 @@ async function bootstrap() {
     config,
     t,
     computeEta,
+    getPointEta,
     getDeviceProgress,
     getAverageSpeedMs,
     getProgressHistory,
