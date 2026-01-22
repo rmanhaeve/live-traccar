@@ -10,3 +10,4 @@ tracks/manifest.json
 *.tmp
 *.swp
 *.swo
+backend/.env

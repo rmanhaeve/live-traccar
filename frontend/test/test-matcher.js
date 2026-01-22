@@ -23,7 +23,7 @@ function approxEqual(a, b, tol) {
 
 async function run() {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const gpxPath = path.join(here, "..", "tracks", "10k.gpx");
+  const gpxPath = path.join(here, "..", "tracks", "stapvoorstap.gpx");
   const pts = parseGpx(gpxPath);
   app.buildRouteProfile([pts]);
   const total = app.getRouteTotal();

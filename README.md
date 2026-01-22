@@ -1,31 +1,101 @@
 # Live Traccar Tracker
 
-Lightweight static viewer that overlays GPX routes and live Traccar device locations on an OSM map. No backend server required beyond Traccar; serve the files with any static host (for local testing, `python -m http.server` works).
+FastAPI-backed tracker that renders a GPX route with live participant locations from a Traccar server. The backend performs all computation (route parsing, projections, progress/ETA/history, weather). The frontend is a thin renderer that only consumes `/api/*` responses.
 
-## Setup
-- Copy `config.example.json` to `config.json` and set:
-  - `title`: page title (defaults to “Live Tracker”).
-  - `trackFile`: path to your single GPX file (default: `tracks/start.gpx`).
-  - `translationFile`: translation JSON (default: `translations/en.json`).
-  - `traccarUrl`: base URL of your Traccar server.
-  - `token`: API token for the account that can view the devices.
-  - Optional: `refreshSeconds`, `deviceIds` (array to whitelist specific devices), `showViewerLocation` (show a “You” dot using browser geolocation), `staleMinutes` (after this age, participant dots/legend turn gray), `startTime` (ISO string to ignore history before the event start), `debugStartTime`/`debugSpeedKph` (override the start datetime and speed for simulated riders in debug mode), `historyHours` (how many hours of history to fetch/retain for progress history; defaults to 24h; ETA averages still only use the last hour). Km marker spacing now follows built-in zoom-based defaults (sparser by default). ETAs use average speed over the last hour; if insufficient data, they fall back to available history/instant speed. Off-route threshold: >200 m from the track counts as off-route (ETAs will show “participant not on track”).
+## Repository structure
+- `backend/`: FastAPI app, services, tests.
+- `frontend/`: Static UI (Leaflet, HTML/CSS/JS) served by the backend in development.
 
-Debug mode is controlled via URL query params: append `?debug=1` (or `debug=true/on/yes`) to enable fake riders; use `debug=0`/`false` to disable.
-- When debug mode is on, no calls are made to the real Traccar API. Fake riders are generated forward from `debugStartTime` at `debugSpeedKph`, with staggered start times to spread them along the route.
-- Leaflet assets are vendored in `vendor/leaflet` (no CDN needed). `config.json` is git-ignored so you don’t accidentally commit secrets.
+## Architecture overview
+1. **Traccar** is the source of truth for devices and positions.
+2. **Backend** polls Traccar, computes route progress, ETAs, history events, and weather, then exposes the data via REST endpoints.
+3. **Frontend** polls the backend and renders the map and UI. No computation is done in the browser.
+
+## Requirements
+- Python 3.11+
+- Traccar server with API token
+
+## Configuration
+Create `backend/.env` from the example:
+```bash
+cp backend/.env.example backend/.env
+```
+
+### Environment variables
+All settings are prefixed with `APP_`:
+- `APP_TRACCAR_URL`: Traccar base URL (required)
+- `APP_TRACCAR_TOKEN`: Traccar API token (required)
+- `APP_TITLE`: Page title
+- `APP_REFRESH_SECONDS`: Poll interval (default: 8)
+- `APP_STALE_MINUTES`: Stale threshold for participant marker (default: 15)
+- `APP_HISTORY_HOURS`: History retention (default: 24)
+- `APP_SHOW_VIEWER_LOCATION`: Enable "You" marker (default: true)
+- `APP_SHOW_KM_MARKERS`: Enable km marker toggle (default: true)
+- `APP_SHOW_WAYPOINTS`: Enable waypoint toggle (default: true)
+- `APP_TRACK_FILE`: GPX path (default: `frontend/tracks/stapvoorstap.gpx`)
+- `APP_TRANSLATION_FILE`: Translation JSON path (default: `frontend/translations/en.json`)
+- `APP_WEATHER_ENABLED`: Weather panel toggle (default: true)
+- `APP_WEATHER_HOURS`: Forecast rows (default: 4)
 
 ## Running locally
-1. Place your GPX file (default `tracks/start.gpx`, or whatever `trackFile` points to).
-2. Serve the folder (example with Python, but any static host works):
-   ```bash
-   python -m http.server 8000
-   ```
-3. Open http://localhost:8000 in your browser. The map will load the GPX route, show waypoints, and poll Traccar for live positions using your config.
+```bash
+python -m pip install -r backend/requirements.txt
+uvicorn backend.main:app --reload
+```
+Open http://localhost:8000
 
-## How it works
-- Uses Leaflet with OSM tiles for the base map.
-- Reads a single GPX file for the route, draws it, and extracts waypoints for ETA predictions.
-- Polls Traccar: `GET /api/devices` for metadata and `GET /api/positions` for latest fixes. Authorization uses the bearer token from `config.json`.
-- Select a participant via the legend to see ETAs to waypoints; right-click/long-press the map for a menu (open in Google Maps/Waze, copy coords, see ETA to that point).
-- All logic runs in `app.js`; styling lives in `styles.css`.
+## API endpoints
+All responses are JSON.
+
+### Config
+`GET /api/config`
+- Returns UI config values for the frontend.
+
+### Route
+`GET /api/route`
+- Returns route segments, waypoints, elevation profile, and km markers.
+
+### Participants
+`GET /api/participants`
+- Returns current participants, positions, progress, and computed status.
+
+`GET /api/participants/{id}/waypoints`
+- Returns waypoint ETAs and distance-to for a participant.
+
+`GET /api/participants/{id}/history`
+- Returns distance tick events, waypoint enter/leave events, and upcoming waypoints.
+
+`GET /api/participants/{id}/eta?lat=...&lng=...`
+- Returns ETA to an arbitrary point on the route (snapped to route).
+
+### Weather
+`GET /api/weather?participantId=...`
+- Returns forecast for a participant location or route center.
+
+## Data flow details
+- Route is parsed once on demand and cached in memory.
+- Traccar devices/positions are polled on each backend refresh cycle.
+- History uses Traccar route reports and in-memory aggregation.
+- Weather data is cached for 10 minutes per location.
+
+## Testing
+Backend unit tests and API tests:
+```bash
+python -m pytest backend/tests -q
+```
+
+Frontend unit tests (optional):
+```bash
+node frontend/test/run-all.js
+```
+
+## Troubleshooting
+- **Empty map**: Ensure `APP_TRACK_FILE` points to a valid GPX file.
+- **No participants**: Verify Traccar API token and that devices have recent positions.
+- **Weather missing**: Check outbound network access; disable with `APP_WEATHER_ENABLED=false`.
+- **Stale markers**: Increase `APP_STALE_MINUTES` if positions update less frequently.
+
+## Security notes
+- Traccar API token is stored server-side only.
+- The frontend never talks directly to Traccar.
+- Consider adding auth middleware if serving publicly.

@@ -4,6 +4,10 @@ import { setupVisualization, updateMarker, __getVizTestState } from "../src/visu
 // Minimal DOM and Leaflet stubs for the popup/button flow
 global.document = {
   body: { appendChild() {} },
+  documentElement: { style: { setProperty() {} } },
+  querySelector() {
+    return null;
+  },
   createElement(tag) {
     return {
       tag,
@@ -12,6 +16,9 @@ global.document = {
       style: {},
       dataset: {},
       textContent: "",
+      append(...children) {
+        children.forEach((child) => this.appendChild(child));
+      },
       appendChild(child) {
         this.children.push(child);
       },
@@ -22,6 +29,20 @@ global.document = {
       },
     };
   },
+  createElementNS() {
+    return {
+      setAttribute() {},
+      classList: { add() {} },
+      append() {},
+      appendChild() {},
+      setAttributeNS() {},
+      textContent: "",
+    };
+  },
+};
+
+global.window = {
+  addEventListener() {},
 };
 
 function createPopup(initialContent = "") {
@@ -97,21 +118,16 @@ const marker = new DummyMarker();
 setupVisualization({
   config: {},
   t: (k) => k,
-  computeEta: () => null,
-  getDeviceProgress: () => ({ proj: { point: { lat: 1, lng: 2 } } }),
-  getAverageSpeedMs: () => 1,
-  getProgressHistory: () => ({ distances: [], waypoints: [] }),
+  getParticipantHistory: () => ({ kmEvents: [], waypointEvents: [], upcoming: [] }),
+  getWaypointEta: () => null,
+  getPointEta: () => null,
   isStale: () => false,
   formatDateTimeFull: () => "now",
   formatTimeLabel: () => "now",
-  projectOnRoute: () => null,
   selectDevice: () => {},
   getSelectedDeviceId: () => 123,
-  filterDevice: () => true,
   persistToggles: () => {},
-  devices: new Map(),
-  lastSeen: new Map(),
-  lastPositions: new Map(),
+  participants: new Map(),
 });
 
 const vizState = __getVizTestState();
@@ -127,7 +143,6 @@ function getBtn() {
 
 // After position updates, the inline history button should stay clickable even when popup content refreshes
 const basePosition = {
-  deviceId: 123,
   latitude: 0,
   longitude: 0,
   deviceTime: new Date().toISOString(),
@@ -141,13 +156,27 @@ const movedPosition = {
   deviceTime: new Date(Date.now() + 1000).toISOString(),
 };
 
-updateMarker(basePosition);
+const baseParticipant = {
+  id: 123,
+  name: "Participant 123",
+  isStale: false,
+  speedKph: 0,
+  progress: { point: { lat: 1, lng: 2 }, distanceAlong: 0, elevation: null, endpoint: null, offtrack: false },
+  position: basePosition,
+};
+
+const movedParticipant = {
+  ...baseParticipant,
+  position: movedPosition,
+};
+
+updateMarker(baseParticipant);
 let btn = getBtn();
 assert(btn, "history button should exist after first update");
 assert.equal(btn.dataset.bound, "1", "history button should be bound after first update");
 assert(btn.listeners?.length === 1, "history button should have one listener after first update");
 
-updateMarker(movedPosition);
+updateMarker(movedParticipant);
 btn = getBtn();
 assert(btn, "history button should still exist after movement");
 assert.equal(btn.dataset.bound, "1", "history button should remain bound after movement");
