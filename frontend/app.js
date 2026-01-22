@@ -4,21 +4,30 @@ import {
   TRANSLATIONS_MAP,
   LANGUAGE_COOKIE,
 } from "./src/constants.js";
+import { buildRouteProfile, projectOnRoute } from "./src/route.js";
+import {
+  clearNowOverride,
+  getNowDate,
+  getNowMs,
+  getOverrideTicking,
+  hasNowOverride,
+  setNowOverride,
+  setOverrideTicking,
+} from "./src/time.js";
 import {
   setupVisualization,
   initMap,
   initContextMenu,
   renderRoute,
+  rebuildKmMarkers,
   renderWaypoints,
   renderLegend,
   renderToggles,
   updateMarker,
-  pruneMarkers,
   extendBounds,
   fitToData,
   clearRoute,
   setRouteWaypoints,
-  setKmMarkers,
   setElevationProfile,
   setElevationProgress,
   startViewerLocation as vizStartViewerLocation,
@@ -29,11 +38,29 @@ import {
 
 const statusEl = document.getElementById("status");
 const titleEl = document.getElementById("title");
+const countdownEl = document.getElementById("countdown");
+const countdownLabelEl = document.getElementById("countdown-label");
+const countdownTimeEl = document.getElementById("countdown-time");
+const countdownStartEl = document.getElementById("countdown-start");
+const countdownOverlayEl = document.getElementById("countdown-overlay");
+const countdownOverlayLabelEl = document.getElementById("countdown-overlay-label");
+const countdownOverlayTimeEl = document.getElementById("countdown-overlay-time");
+const countdownOverlayStartEl = document.getElementById("countdown-overlay-start");
+const countdownOverlayCloseEl = document.getElementById("countdown-overlay-close");
+const countdownOverlayDismissEl = document.getElementById("countdown-overlay-dismiss");
+const countdownOverlayNeverEl = document.getElementById("countdown-overlay-never");
+const debugTimeWrapEl = document.getElementById("debug-time");
+const debugTimeInputEl = document.getElementById("debug-time-input");
+const debugTimeApplyEl = document.getElementById("debug-time-apply");
+const debugTimeToggleEl = document.getElementById("debug-time-toggle");
+const debugTimeToggleStateEl = document.getElementById("debug-time-toggle-state");
+const debugTimeLabelEl = document.getElementById("debug-time-label");
 let config = { ...DEFAULT_CONFIG };
 let texts = { ...DEFAULT_TEXTS };
 let currentLanguage = "en";
 let selectedParticipantId = null;
 let refreshTimer;
+let countdownTimer;
 let downloadButton;
 let langSelector;
 let userPreferences;
@@ -45,17 +72,71 @@ let weatherErrorEl;
 let weatherSummaryEl;
 let weatherUpdatedEl;
 const weatherState = { expanded: false, pending: false };
+let weatherOverlay;
+const WEATHER_STALE_MS = 10 * 60 * 1000;
+const weatherCache = new Map();
 let initialSelectedParticipantId = null;
-let weatherLastFetch = 0;
+let eventStartMs = null;
+let countdownOverlayDismissed = false;
+const COUNTDOWN_OVERLAY_PREF = "hideCountdownOverlay";
+let initialTimeOverrideMs = null;
+let initialTimeOverrideTicking = true;
 
 const participants = new Map();
 const waypointEtas = new Map();
 const participantHistories = new Map();
+const devices = new Map();
+const lastSeen = new Map();
+const lastPositions = new Map();
 
 async function fetchJson(path) {
   const res = await fetch(path, { cache: "no-store" });
   if (!res.ok) throw new Error(`Request failed: ${path}`);
   return res.json();
+}
+
+function parseBoolParam(params, key) {
+  if (!params.has(key)) return null;
+  const raw = params.get(key);
+  if (raw === null || raw === "") return true;
+  const val = raw.toString().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(val);
+}
+
+function applyUrlOverrides() {
+  const params = new URLSearchParams(window.location.search);
+  const debugParam = parseBoolParam(params, "debug");
+  if (debugParam !== null) {
+    config.debug = debugParam;
+  }
+  const timeParam = params.get("debugTime");
+  if (timeParam) {
+    const parsed = Number.isFinite(Number(timeParam)) ? Number(timeParam) : Date.parse(timeParam);
+    if (Number.isFinite(parsed)) initialTimeOverrideMs = parsed;
+  }
+  const freezeParam = parseBoolParam(params, "debugTimeFreeze");
+  if (freezeParam !== null) {
+    initialTimeOverrideTicking = !freezeParam;
+    if (!timeParam && freezeParam) {
+      initialTimeOverrideMs = Date.now();
+    }
+  }
+}
+
+function normalizeDebugTimeParamIfNeeded() {
+  const params = new URLSearchParams(window.location.search);
+  const debugParam = parseBoolParam(params, "debug");
+  const isDebug = debugParam === null ? Boolean(config?.debug) : debugParam;
+  if (!isDebug) return false;
+  const timeParam = params.get("debugTime");
+  if (!timeParam) {
+    const nowIso = new Date().toISOString();
+    params.set("debugTime", nowIso);
+    const next = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+    window.location.replace(next);
+    return true;
+  }
+  return false;
 }
 
 function t(key, vars = {}) {
@@ -73,9 +154,9 @@ function setStatus(text, isError = false) {
 
 function formatTimeLabel(timeStr) {
   if (!timeStr) return "";
-  const d = timeStr instanceof Date ? timeStr : new Date(timeStr);
+  const d = new Date(timeStr);
   if (Number.isNaN(d.getTime())) return "";
-  const today = new Date();
+  const today = getNowDate();
   const sameDay =
     d.getFullYear() === today.getFullYear() &&
     d.getMonth() === today.getMonth() &&
@@ -94,6 +175,197 @@ function formatDateTimeFull(timeStr) {
   const d = timeStr instanceof Date ? timeStr : new Date(timeStr);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
+
+function parseEventStart(raw) {
+  if (!raw) return null;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatCountdownMs(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (days || hours) parts.push(`${hours}h`);
+  if (days || hours || minutes) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
+  return parts.join(" ");
+}
+
+function getEventStartMs() {
+  return Number.isFinite(eventStartMs) ? eventStartMs : null;
+}
+
+function shouldHideCountdownOverlay() {
+  const prefs = readPreferences();
+  return Boolean(prefs?.[COUNTDOWN_OVERLAY_PREF]);
+}
+
+function hideCountdownOverlay({ persist = false } = {}) {
+  if (persist) persistPreferences({ [COUNTDOWN_OVERLAY_PREF]: true });
+  countdownOverlayDismissed = true;
+  if (countdownOverlayEl) countdownOverlayEl.classList.add("hidden");
+}
+
+function updateCountdownOverlayCopy() {
+  if (countdownOverlayLabelEl) countdownOverlayLabelEl.textContent = t("countdownOverlayHeading");
+  if (countdownOverlayDismissEl) countdownOverlayDismissEl.textContent = t("countdownOverlayDismiss");
+  if (countdownOverlayNeverEl) countdownOverlayNeverEl.textContent = t("countdownOverlayNever");
+}
+
+function formatDatetimeLocalValue(ms) {
+  if (!Number.isFinite(ms)) return "";
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const min = pad(d.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+}
+
+function updateDebugTimeTexts() {
+  if (debugTimeLabelEl) debugTimeLabelEl.textContent = t("debugTimeLabel");
+  if (debugTimeApplyEl) debugTimeApplyEl.textContent = t("debugTimeApply");
+  if (debugTimeToggleStateEl) {
+    const ticking = debugTimeToggleEl ? debugTimeToggleEl.checked : getOverrideTicking();
+    debugTimeToggleStateEl.textContent = ticking === false ? t("debugTimeFrozen") : t("debugTimeTicking");
+  }
+}
+
+function setDebugTimeInputValue(ms) {
+  if (!debugTimeInputEl) return;
+  debugTimeInputEl.value = formatDatetimeLocalValue(ms);
+}
+
+function updateUrlDebugTimeParams({ timeMs, ticking } = {}) {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("debug") && !config?.debug) return;
+  if (Number.isFinite(timeMs)) {
+    params.set("debugTime", new Date(timeMs).toISOString());
+  } else {
+    params.delete("debugTime");
+  }
+  if (typeof ticking === "boolean") {
+    params.set("debugTimeFreeze", ticking ? "false" : "true");
+  }
+  const next = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+  window.history.replaceState({}, "", next);
+}
+
+function applyDebugTimeOverride(ms) {
+  if (!config?.debug) {
+    clearNowOverride();
+    return;
+  }
+  if (!Number.isFinite(ms)) {
+    clearNowOverride();
+    setDebugTimeInputValue(null);
+    const ticking = debugTimeToggleEl ? debugTimeToggleEl.checked : true;
+    if (!ticking) {
+      setNowOverride(Date.now(), { ticking: false });
+    }
+  } else {
+    const ticking = debugTimeToggleEl ? debugTimeToggleEl.checked : true;
+    setNowOverride(ms, { ticking });
+    setDebugTimeInputValue(ms);
+  }
+  updateUrlDebugTimeParams({ timeMs: Number.isFinite(ms) ? ms : null, ticking: debugTimeToggleEl ? debugTimeToggleEl.checked : null });
+  countdownOverlayDismissed = false;
+  refreshCountdownTimer();
+  refreshWeather(true).catch((err) => console.error(err));
+}
+
+function restoreDebugTimeOverride() {
+  if (!config?.debug) {
+    clearNowOverride();
+    setDebugTimeInputValue(null);
+    return false;
+  }
+  if (Number.isFinite(initialTimeOverrideMs)) {
+    setNowOverride(initialTimeOverrideMs, { ticking: initialTimeOverrideTicking });
+    setDebugTimeInputValue(initialTimeOverrideMs);
+    if (debugTimeToggleEl) debugTimeToggleEl.checked = Boolean(initialTimeOverrideTicking);
+    return true;
+  }
+  clearNowOverride();
+  setDebugTimeInputValue(null);
+  return false;
+}
+
+function stopCountdownTimer() {
+  if (countdownTimer) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+}
+
+function renderCountdown() {
+  const startMs = getEventStartMs();
+  if (!startMs) {
+    if (countdownLabelEl) countdownLabelEl.textContent = "";
+    if (countdownTimeEl) countdownTimeEl.textContent = "";
+    if (countdownStartEl) countdownStartEl.textContent = "";
+    if (countdownEl) countdownEl.classList.add("hidden");
+    if (countdownOverlayTimeEl) countdownOverlayTimeEl.textContent = "";
+    if (countdownOverlayStartEl) countdownOverlayStartEl.textContent = "";
+    if (countdownOverlayEl) countdownOverlayEl.classList.add("hidden");
+    stopCountdownTimer();
+    return;
+  }
+  const diff = startMs - getNowMs();
+  if (diff <= 0) {
+    if (countdownLabelEl) countdownLabelEl.textContent = "";
+    if (countdownTimeEl) countdownTimeEl.textContent = "";
+    if (countdownStartEl) countdownStartEl.textContent = "";
+    if (countdownEl) countdownEl.classList.add("hidden");
+    if (countdownOverlayEl) countdownOverlayEl.classList.add("hidden");
+    stopCountdownTimer();
+    return;
+  }
+  if (countdownEl) countdownEl.classList.remove("hidden");
+  if (countdownLabelEl) countdownLabelEl.textContent = t("countdownStartsIn");
+  if (countdownTimeEl) countdownTimeEl.textContent = formatCountdownMs(diff);
+  if (countdownStartEl) {
+    countdownStartEl.textContent = t("countdownStartAt", {
+      time: formatDateTimeFull(new Date(startMs)),
+    });
+  }
+  renderCountdownOverlay(startMs, diff);
+}
+
+function renderCountdownOverlay(startMs, diff) {
+  if (!countdownOverlayEl) return;
+  const shouldShow =
+    Number.isFinite(startMs) &&
+    diff > 0 &&
+    !countdownOverlayDismissed &&
+    !shouldHideCountdownOverlay();
+  countdownOverlayEl.classList.toggle("hidden", !shouldShow);
+  if (!shouldShow) return;
+  if (countdownOverlayTimeEl) countdownOverlayTimeEl.textContent = formatCountdownMs(diff);
+  if (countdownOverlayStartEl) {
+    countdownOverlayStartEl.textContent = t("countdownStartAt", {
+      time: formatDateTimeFull(new Date(startMs)),
+    });
+  }
+  updateCountdownOverlayCopy();
+}
+
+function refreshCountdownTimer() {
+  stopCountdownTimer();
+  renderCountdown();
+  const startMs = getEventStartMs();
+  if (startMs && startMs > getNowMs()) {
+    countdownTimer = setInterval(renderCountdown, 1000);
+  }
 }
 
 function getCookie(name) {
@@ -182,6 +454,8 @@ async function loadConfig() {
   try {
     const cfg = await fetchJson("/api/config");
     Object.assign(config, DEFAULT_CONFIG, cfg);
+    eventStartMs = parseEventStart(config.startTime);
+    applyUrlOverrides();
     applySavedTogglePreferences();
     texts = { ...DEFAULT_TEXTS };
     setStatus("");
@@ -190,6 +464,7 @@ async function loadConfig() {
     document.title = pageTitle;
     renderToggles();
     persistToggles();
+    refreshCountdownTimer();
   } catch (err) {
     setStatus("");
   }
@@ -230,6 +505,9 @@ async function loadTranslations(preferredLang) {
   renderLegend();
   renderWaypoints();
   renderToggles();
+  updateCountdownOverlayCopy();
+  updateDebugTimeTexts();
+  renderCountdown();
 }
 
 function initLangSelector() {
@@ -242,6 +520,67 @@ function initLangSelector() {
     renderToggles();
   });
   updateLangSelector();
+}
+
+function setupCountdownOverlay() {
+  if (countdownOverlayCloseEl) {
+    countdownOverlayCloseEl.addEventListener("click", () => hideCountdownOverlay());
+  }
+  if (countdownOverlayDismissEl) {
+    countdownOverlayDismissEl.addEventListener("click", () => hideCountdownOverlay());
+  }
+  if (countdownOverlayNeverEl) {
+    countdownOverlayNeverEl.addEventListener("click", () => hideCountdownOverlay({ persist: true }));
+  }
+  updateCountdownOverlayCopy();
+}
+
+function setupDebugTimeControls() {
+  if (!debugTimeWrapEl) return;
+  const show = Boolean(config?.debug);
+  debugTimeWrapEl.classList.toggle("hidden", !show);
+  updateDebugTimeTexts();
+  if (!show) {
+    clearNowOverride();
+    return;
+  }
+  const restored = restoreDebugTimeOverride();
+  if (restored) {
+    updateUrlDebugTimeParams({
+      timeMs: Number.isFinite(initialTimeOverrideMs) ? initialTimeOverrideMs : null,
+      ticking: initialTimeOverrideTicking,
+    });
+    refreshCountdownTimer();
+    refreshWeather(true).catch((err) => console.error(err));
+  }
+  if (!debugTimeInputEl) return;
+  if (debugTimeApplyEl) {
+    debugTimeApplyEl.addEventListener("click", () => {
+      const raw = debugTimeInputEl?.value;
+      if (!raw) {
+        applyDebugTimeOverride(null);
+        return;
+      }
+      const ms = Date.parse(raw);
+      if (Number.isFinite(ms)) applyDebugTimeOverride(ms);
+    });
+  }
+  if (debugTimeToggleEl) {
+    debugTimeToggleEl.addEventListener("change", () => {
+      const ticking = debugTimeToggleEl.checked;
+      if (config?.debug && hasNowOverride()) {
+        setOverrideTicking(ticking);
+      }
+      updateDebugTimeTexts();
+      updateUrlDebugTimeParams({ ticking });
+      refreshCountdownTimer();
+    });
+  }
+  debugTimeInputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      debugTimeApplyEl?.click();
+    }
+  });
 }
 
 function updateLangSelector() {
@@ -285,9 +624,9 @@ function renderWeatherSummary(data) {
   const wind = summary.wind;
   const precip = summary.precip;
   const parts = [];
+  if (Number.isFinite(precip)) parts.push(`${precip.toFixed(1)} mm ${t("weatherPrecip")}`);
   if (Number.isFinite(temp)) parts.push(`${Math.round(temp)}°C`);
   if (Number.isFinite(wind)) parts.push(`${Math.round(wind)} km/h ${t("weatherWind")}`);
-  if (Number.isFinite(precip) && precip > 0) parts.push(`${precip.toFixed(1)} mm ${t("weatherPrecip")}`);
   weatherSummaryEl.textContent = parts.join(" · ") || t("weatherUnavailable");
 }
 
@@ -300,18 +639,19 @@ function renderWeatherForecast(data) {
     return;
   }
   rows.forEach((row) => {
-    const div = document.createElement("div");
+    const div = document.createElement("button");
+    div.type = "button";
     div.className = "weather-row";
     const left = document.createElement("div");
     left.className = "weather-label";
-    const label = row.label || formatTimeLabel(row.timeMs);
+    const label = row.label || (row.timeMs ? formatTimeLabel(new Date(row.timeMs)) : "");
     left.textContent = label || "";
     const right = document.createElement("div");
     right.className = "weather-meta";
     const bits = [];
     if (row.temp != null) bits.push(`${row.temp}°C`);
-    if (row.precip != null) bits.push(`${row.precip}% rain`);
-    if (row.wind != null) bits.push(`${row.wind} km/h`);
+    if (row.precip != null) bits.push(`${row.precip}% ${t("weatherPrecip")}`);
+    if (row.wind != null) bits.push(`${row.wind} km/h ${t("weatherWind")}`);
     if (row.distanceAlong != null && Number.isFinite(row.distanceAlong)) {
       bits.push(`${Math.round((row.distanceAlong / 1000) * 10) / 10} km`);
     }
@@ -326,9 +666,94 @@ function setWeatherExpanded(expanded) {
   if (weatherPanel) weatherPanel.classList.toggle("hidden", !expanded);
 }
 
+function hideWeatherOverlay() {
+  if (weatherOverlay && weatherOverlay.parentNode) {
+    weatherOverlay.parentNode.removeChild(weatherOverlay);
+  }
+  weatherOverlay = null;
+}
+
+function formatWeatherDetails(row) {
+  const bits = [];
+  if (row.temp != null) bits.push(`${row.temp}°C`);
+  if (row.precip != null) bits.push(`${row.precip}% ${t("weatherPrecip")}`);
+  if (row.wind != null) bits.push(`${row.wind} km/h ${t("weatherWind")}`);
+  return bits.join(" · ") || t("weatherUnavailable");
+}
+
+function renderWeatherOverlay(data) {
+  hideWeatherOverlay();
+  const overlay = document.createElement("div");
+  overlay.className = "weather-modal-overlay";
+  const modal = document.createElement("div");
+  modal.className = "weather-modal";
+  const header = document.createElement("div");
+  header.className = "weather-modal-header";
+  const title = document.createElement("div");
+  title.className = "weather-modal-title";
+  title.textContent = t("weatherNextHours");
+  const updated = document.createElement("div");
+  updated.className = "weather-modal-updated";
+  if (weatherUpdatedEl?.textContent) updated.textContent = weatherUpdatedEl.textContent;
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "weather-modal-close";
+  closeBtn.textContent = t("closeLabel");
+  closeBtn.addEventListener("click", hideWeatherOverlay);
+  header.append(title, updated, closeBtn);
+  modal.appendChild(header);
+
+  const rows = data?.rows || [];
+  const list = document.createElement("div");
+  list.className = "weather-modal-list";
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "weather-modal-empty";
+    empty.textContent = t("weatherUnavailable");
+    list.appendChild(empty);
+  } else {
+    rows.forEach((row) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "weather-modal-row";
+      const timeCol = document.createElement("div");
+      timeCol.className = "weather-modal-col time";
+      timeCol.textContent = row.timeMs ? formatTimeLabel(new Date(row.timeMs)) : row.label || "";
+      const condCol = document.createElement("div");
+      condCol.className = "weather-modal-col conditions";
+      condCol.textContent = formatWeatherDetails(row);
+      item.append(timeCol, condCol);
+      list.appendChild(item);
+    });
+  }
+
+  modal.appendChild(list);
+  overlay.appendChild(modal);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) hideWeatherOverlay();
+  });
+  document.body.appendChild(overlay);
+  weatherOverlay = overlay;
+}
+
+function getWeatherCacheKey(participantId) {
+  return participantId != null ? String(participantId) : "route";
+}
+
 async function refreshWeather(force = false, participantId = selectedParticipantId) {
-  if (!weatherPanel || weatherState.pending) return;
-  if (!force && Date.now() - weatherLastFetch < 10 * 60 * 1000) return;
+  if (weatherState.pending) return null;
+  const cacheKey = getWeatherCacheKey(participantId);
+  const cached = weatherCache.get(cacheKey);
+  if (!force && cached && getNowMs() - cached.lastFetch < WEATHER_STALE_MS) {
+    renderWeatherSummary(cached.data);
+    if (weatherUpdatedEl) {
+      weatherUpdatedEl.textContent = new Date(cached.lastFetch).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+    return cached.data;
+  }
   weatherState.pending = true;
   if (weatherErrorEl) {
     weatherErrorEl.classList.add("hidden");
@@ -338,21 +763,29 @@ async function refreshWeather(force = false, participantId = selectedParticipant
   try {
     const path = participantId ? `/api/weather?participantId=${participantId}` : "/api/weather";
     const data = await fetchJson(path);
-    renderWeatherSummary(data);
-    renderWeatherForecast(data);
-    weatherLastFetch = Date.now();
+    const entry = { data, lastFetch: getNowMs() };
+    weatherCache.set(cacheKey, entry);
+    renderWeatherSummary(entry.data);
+    renderWeatherForecast(entry.data);
     if (weatherUpdatedEl) {
-      weatherUpdatedEl.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      weatherUpdatedEl.textContent = getNowDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
+    return entry.data;
   } catch (err) {
     console.error(err);
     if (weatherErrorEl) {
       weatherErrorEl.textContent = t("weatherUnavailable");
       weatherErrorEl.classList.remove("hidden");
     }
+    return null;
   } finally {
     weatherState.pending = false;
   }
+}
+
+async function showWeatherOverlay() {
+  const data = await refreshWeather(false, selectedParticipantId);
+  renderWeatherOverlay(data);
 }
 
 function setupWeatherWidget() {
@@ -362,15 +795,14 @@ function setupWeatherWidget() {
   weatherErrorEl = document.getElementById("weather-error");
   weatherSummaryEl = document.getElementById("weather-summary");
   weatherUpdatedEl = document.getElementById("weather-updated");
-  const titleElLocal = document.getElementById("weather-panel-title");
-  if (titleElLocal) titleElLocal.textContent = t("weatherTitle");
+  const titleEl = document.getElementById("weather-panel-title");
+  if (titleEl) titleEl.textContent = t("weatherTitle");
   if (weatherSummaryEl) weatherSummaryEl.textContent = "";
   setWeatherExpanded(false);
+  if (weatherPanel) weatherPanel.classList.add("hidden");
   if (weatherToggle) {
     weatherToggle.addEventListener("click", () => {
-      const next = !weatherState.expanded;
-      setWeatherExpanded(next);
-      if (next) refreshWeather(true);
+      showWeatherOverlay().catch((err) => console.error(err));
     });
   }
 }
@@ -379,11 +811,12 @@ async function loadRoute() {
   try {
     const data = await fetchJson("/api/route");
     clearRoute();
+    buildRouteProfile(data.segments || []);
     renderRoute(data.segments, "#0c8bc7");
     setRouteWaypoints(data.waypoints || []);
-    setKmMarkers(data.kmMarkers || []);
-    setElevationProfile(data.elevationProfile || null, data.elevationProfile?.totals || null);
+    setElevationProfile(data.elevationProfile || null);
     renderWaypoints();
+    rebuildKmMarkers();
     (data.segments || []).forEach((seg) => seg.forEach((pt) => extendBounds(pt)));
     fitToData();
     refreshWeather(true).catch((err) => console.error(err));
@@ -395,7 +828,22 @@ async function loadRoute() {
 
 function updateParticipantCaches(list) {
   participants.clear();
-  list.forEach((participant) => participants.set(participant.id, participant));
+  devices.clear();
+  lastSeen.clear();
+  lastPositions.clear();
+  list.forEach((participant) => {
+    participants.set(participant.id, participant);
+    devices.set(participant.id, { id: participant.id, name: participant.name });
+    if (participant.position) {
+      lastPositions.set(participant.id, participant.position);
+      const time =
+        participant.lastSeen ||
+        participant.position.deviceTime ||
+        participant.position.fixTime ||
+        participant.position.serverTime;
+      if (time) lastSeen.set(participant.id, time);
+    }
+  });
 }
 
 function getParticipant(id) {
@@ -404,6 +852,37 @@ function getParticipant(id) {
 
 function getParticipantHistory(id) {
   return participantHistories.get(id) || null;
+}
+
+function findEtaForDistance(list, distanceAlong) {
+  if (!Array.isArray(list) || distanceAlong == null) return null;
+  let best = null;
+  let bestDiff = null;
+  list.forEach((item) => {
+    const dist = item?.distanceAlong;
+    if (!Number.isFinite(dist)) return;
+    const diff = Math.abs(dist - distanceAlong);
+    if (bestDiff == null || diff < bestDiff) {
+      best = item;
+      bestDiff = diff;
+    }
+  });
+  if (bestDiff != null && bestDiff <= 5) return best;
+  return null;
+}
+
+function computeEta(participantId, distanceAlong) {
+  const waypointMap = waypointEtas.get(participantId);
+  if (waypointMap) {
+    const entry = findEtaForDistance(Array.from(waypointMap.values()), distanceAlong);
+    if (entry?.eta) return entry.eta;
+  }
+  const history = participantHistories.get(participantId);
+  if (history?.upcoming) {
+    const entry = findEtaForDistance(history.upcoming, distanceAlong);
+    if (entry?.eta) return entry.eta;
+  }
+  return null;
 }
 
 function getWaypointEta(participantId, waypointId) {
@@ -420,6 +899,41 @@ function isStale(participantId) {
   return Boolean(participants.get(participantId)?.isStale);
 }
 
+function getDeviceProgress(participantId) {
+  const participant = participants.get(participantId);
+  const prog = participant?.progress;
+  if (!prog) return null;
+  return {
+    proj: {
+      distanceAlong: prog.distanceAlong,
+      point: prog.point,
+    },
+    offtrack: prog.offtrack,
+    endpoint: prog.endpoint,
+  };
+}
+
+function getAverageSpeedMs(participantId) {
+  const speedKph = participants.get(participantId)?.speedKph || 0;
+  if (!Number.isFinite(speedKph) || speedKph <= 0) return 0;
+  return speedKph / 3.6;
+}
+
+function getProgressHistory(deviceId) {
+  const history = participantHistories.get(deviceId);
+  if (!history) return { distances: [], waypoints: [] };
+  return {
+    distances: history.kmEvents || [],
+    waypoints: history.waypointEvents || [],
+  };
+}
+
+function filterDevice(id) {
+  if (config?.debug) return true;
+  if (!config?.deviceIds || !Array.isArray(config.deviceIds)) return true;
+  return config.deviceIds.includes(id);
+}
+
 async function refreshParticipants() {
   let list = [];
   try {
@@ -429,8 +943,9 @@ async function refreshParticipants() {
   } catch (err) {
     console.error(err);
   }
-  pruneMarkers(list.map((participant) => participant.id));
-  list.forEach((participant) => updateMarker(participant));
+  list.forEach((participant) => {
+    if (participant.position) updateMarker(participant.position);
+  });
   applySavedSelectedParticipant(list);
   renderLegend();
   renderWaypoints();
@@ -440,9 +955,9 @@ async function refreshParticipants() {
     const targetId = preferred || list[0].id;
     selectParticipant(targetId);
   } else if (selectedParticipantId) {
-    const selected = participants.get(selectedParticipantId);
-    if (selected?.progress?.distanceAlong != null) {
-      setElevationProgress(selected.progress.distanceAlong, selected.progress.elevation || null);
+    const prog = getDeviceProgress(selectedParticipantId);
+    if (prog?.proj?.distanceAlong != null) {
+      setElevationProgress(prog.proj.distanceAlong);
     }
   }
 }
@@ -473,9 +988,9 @@ function selectParticipant(participantId, { focus = false } = {}) {
   renderLegend();
   renderWaypoints();
   renderToggles();
-  const selected = participants.get(participantId);
-  if (selected?.progress?.distanceAlong != null) {
-    setElevationProgress(selected.progress.distanceAlong, selected.progress.elevation || null);
+  const prog = getDeviceProgress(participantId);
+  if (prog?.proj?.distanceAlong != null) {
+    setElevationProgress(prog.proj.distanceAlong);
   }
   if (focus) {
     // focus handled within visualization
@@ -496,37 +1011,40 @@ async function startPolling() {
   }, interval * 1000);
 }
 
-function setupUiBindings() {
-  initLangSelector();
-  initDownloadButton();
-  setupWeatherWidget();
-}
-
 async function bootstrap() {
   setupVisualization({
     config,
     t,
+    computeEta,
+    getDeviceProgress,
+    getAverageSpeedMs,
+    getProgressHistory,
     formatDateTimeFull,
     formatTimeLabel,
     selectDevice: selectParticipant,
     getSelectedDeviceId: () => selectedParticipantId,
-    getParticipant,
-    getParticipantHistory,
-    getWaypointEta,
-    getPointEta,
     isStale,
+    projectOnRoute,
+    filterDevice,
     persistToggles,
     persistPanels,
     getPanelPreferences,
-    participants,
-    startViewerLocation: vizStartViewerLocation,
-    stopViewerLocation: vizStopViewerLocation,
+    devices,
+    lastSeen,
+    lastPositions,
+    startViewerLocation: () => vizStartViewerLocation(),
+    stopViewerLocation: () => vizStopViewerLocation(),
   });
   initMap();
   initContextMenu();
-  setupUiBindings();
+  setupCountdownOverlay();
   await loadConfig();
+  if (normalizeDebugTimeParamIfNeeded()) return;
+  initLangSelector();
+  setupWeatherWidget();
+  initDownloadButton();
   await loadTranslations();
+  setupDebugTimeControls();
   await loadRoute();
   await startPolling();
 }

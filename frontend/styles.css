@@ -35,11 +35,106 @@ body {
   letter-spacing: 0.02em;
 }
 
+.countdown {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 10px;
+  color: #f7fbff;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18);
+  min-width: 200px;
+}
+
+.countdown-label {
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.countdown-time {
+  font-weight: 800;
+  font-size: 1.1rem;
+  letter-spacing: 0.01em;
+}
+
+.countdown-start {
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.debug-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+}
+
+.debug-time-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #f7fbff;
+}
+
+.debug-time-input {
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #0f172a;
+  font: inherit;
+}
+
+.debug-time-btn {
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: #0f5faf;
+  color: #f7fbff;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.debug-time-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.debug-time-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.debug-time-toggle-input {
+  width: 18px;
+  height: 18px;
+}
+
+.debug-time-toggle-state {
+  color: #f7fbff;
+  font-weight: 700;
 }
 
 .weather-widget {
@@ -51,11 +146,59 @@ body {
   align-items: center;
   gap: 6px;
   min-width: 140px;
+  border: 2px solid rgba(12, 139, 199, 0.12);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.16);
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+  height: 42px;
 }
 
 .weather-summary {
   font-weight: 600;
   color: #0f5faf;
+}
+
+.weather-toggle:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+  border-color: rgba(12, 139, 199, 0.35);
+}
+
+.topbar-btn {
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: #f7fbff;
+  color: #0f5faf;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.topbar-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+}
+
+.topbar-btn.icon-btn {
+  padding: 6px;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(12, 139, 199, 0.12);
+}
+
+.topbar-btn.icon-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .weather-panel {
@@ -97,9 +240,19 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 8px;
+  padding: 8px 10px;
   background: #f5f7fb;
   border-radius: 8px;
+  border: 1px solid #e5e9f0;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.weather-row:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.15);
+  border-color: rgba(12, 139, 199, 0.35);
 }
 
 .weather-label {
@@ -114,6 +267,215 @@ body {
 .weather-error {
   color: #b91c1c;
   font-size: 0.9rem;
+}
+
+.weather-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1200;
+}
+
+.weather-modal {
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: 12px;
+  width: min(560px, 100%);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+}
+
+.weather-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e5e9f0;
+}
+
+.weather-modal-title {
+  font-weight: 700;
+}
+
+.weather-modal-updated {
+  font-size: 0.85rem;
+  color: #475569;
+  margin-left: auto;
+}
+
+.weather-modal-nav {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.weather-nav-btn {
+  border: 1px solid #e5e9f0;
+  background: #f8fafc;
+  color: #0f172a;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.weather-modal-close {
+  border: 1px solid #e5e9f0;
+  background: #f8fafc;
+  color: #0f172a;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.weather-modal-list {
+  padding: 10px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.weather-modal-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e5e9f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.weather-modal-row:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+  border-color: rgba(12, 139, 199, 0.35);
+}
+
+.weather-modal-col.time {
+  font-weight: 700;
+}
+
+.weather-modal-col.distance {
+  color: #334155;
+}
+
+.weather-modal-col.conditions {
+  color: #0f172a;
+}
+
+.weather-modal-empty {
+  padding: 10px 12px;
+  color: #475569;
+}
+
+.countdown-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(51, 65, 85, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1300;
+  backdrop-filter: blur(2px);
+}
+
+.countdown-overlay.hidden {
+  display: none;
+}
+
+.countdown-overlay-card {
+  position: relative;
+  width: min(780px, 100%);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(248, 250, 252, 0.94), rgba(226, 232, 240, 0.9));
+  color: #0f172a;
+  padding: 32px 28px 24px;
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.28);
+  text-align: center;
+}
+
+.countdown-overlay-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(248, 250, 252, 0.9);
+  color: #0f172a;
+  font-size: 1.1rem;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+}
+
+.countdown-overlay-label {
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #475569;
+  margin-bottom: 12px;
+}
+
+.countdown-overlay-time {
+  font-size: clamp(2.8rem, 6vw, 4.8rem);
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.countdown-overlay-start {
+  font-size: 1rem;
+  color: #334155;
+  margin-bottom: 18px;
+}
+
+.countdown-overlay-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.countdown-overlay-btn {
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  min-width: 160px;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.countdown-overlay-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.16);
+}
+
+.countdown-overlay-btn.primary {
+  background: linear-gradient(120deg, #0f5faf, #0c8bc7);
+  border-color: transparent;
+  color: #f8fafc;
+}
+
+.countdown-overlay-btn.ghost {
+  background: rgba(255, 255, 255, 0.82);
 }
 
 .topbar-btn {

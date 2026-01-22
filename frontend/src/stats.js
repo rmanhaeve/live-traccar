@@ -1,6 +1,7 @@
 import { ACTIVE_DISTANCE_THRESHOLD, HISTORY_WINDOW_MS } from "./constants.js";
-import { distanceMeters, toRad } from "./geo.js";
+import { toRad } from "./geo.js";
 import { getRouteTotal, projectOnRoute, projectOnRouteWithHint } from "./route.js";
+import { getNowMs } from "./time.js";
 
 const ENDPOINT_PROXIMITY_METERS = 30;
 const ETA_CONFIDENCE_Z = 1.645; // ~90% confidence assuming roughly normal speed distribution
@@ -22,19 +23,31 @@ function summarizeSpeeds(samples) {
   const speeds = [];
   let totalDist = 0;
   let totalTimeMs = 0;
+  let hint = null;
   for (let i = 1; i < samples.length; i += 1) {
-    const prev = samples[i - 1];
     const curr = samples[i];
+    const prev = samples[i - 1];
     if (!prev || !curr) continue;
     const spanMs = (curr.t || 0) - (prev.t || 0);
     if (!Number.isFinite(spanMs) || spanMs <= 0) continue;
-    const segDist = distanceMeters([prev.lat, prev.lng], [curr.lat, curr.lng]);
+    const prevProjection = projectOnRouteWithHint({ lat: prev.lat, lng: prev.lng }, hint);
+    if (!prevProjection || prevProjection.offtrack) {
+      hint = null;
+      continue;
+    }
+    const currProj = projectOnRouteWithHint({ lat: curr.lat, lng: curr.lng }, prevProjection.distanceAlong);
+    if (!currProj || currProj.offtrack || currProj.distanceAlong == null) {
+      hint = null;
+      continue;
+    }
+    const segDist = Math.abs(currProj.distanceAlong - prevProjection.distanceAlong);
     const segSpeed = segDist / (spanMs / 1000);
     if (Number.isFinite(segSpeed) && segSpeed >= 0) {
       speeds.push(segSpeed);
       totalDist += segDist;
       totalTimeMs += spanMs;
     }
+    hint = currProj.distanceAlong;
   }
   if (!speeds.length || totalTimeMs <= 0) return null;
   const averageMs = totalDist / (totalTimeMs / 1000);
@@ -43,7 +56,7 @@ function summarizeSpeeds(samples) {
   return { averageMs, speedStdDev, segmentCount: speeds.length };
 }
 
-function getSpeedStats(positionsHistory, deviceId, activeStartTimes, now = Date.now()) {
+function getSpeedStats(positionsHistory, deviceId, activeStartTimes, now = getNowMs()) {
   const samples = selectHistorySamples(positionsHistory, deviceId, activeStartTimes, now);
   if (!samples || samples.length < 2) return null;
   return summarizeSpeeds(samples);
@@ -73,7 +86,7 @@ function inferEndpoint(deviceId, distanceAlong, total, lastProjection, positions
   return "start";
 }
 
-export function getAverageSpeedMs(positionsHistory, deviceId, activeStartTimes, now = Date.now()) {
+export function getAverageSpeedMs(positionsHistory, deviceId, activeStartTimes, now = getNowMs()) {
   const stats = getSpeedStats(positionsHistory, deviceId, activeStartTimes, now);
   return stats?.averageMs || 0;
 }
@@ -101,7 +114,7 @@ export function computeDeviceProgress(deviceId, {
 }) {
   const pos = lastPositions.get(deviceId);
   if (!pos) return null;
-  const now = Date.now();
+  const now = getNowMs();
   const last = lastProjection.get(deviceId);
   const hintFresh = last && last.t && now - last.t > HINT_STALE_MS ? null : last?.distanceAlong;
   const heading = getRecentHeading(positionsHistory, deviceId);
@@ -138,7 +151,7 @@ function findActiveStartTime(deviceId, positionsHistory) {
   return null;
 }
 
-export function markActiveOnRoute(deviceId, progress, activeStartTimes, now = Date.now(), positionsHistory = null) {
+export function markActiveOnRoute(deviceId, progress, activeStartTimes, now = getNowMs(), positionsHistory = null) {
   if (!progress || progress.offtrack) return;
   if (progress.proj?.distanceAlong == null) return;
   if (progress.proj.distanceAlong < ACTIVE_DISTANCE_THRESHOLD) return;
@@ -173,17 +186,19 @@ export function computeEta(deviceId, targetDistance, {
   lastProjection,
   positionsHistory,
   activeStartTimes,
+  expectedSpeedMs = 0,
 }) {
-  const now = Date.now();
+  const now = getNowMs();
   const progress = computeDeviceProgress(deviceId, { lastPositions, lastProjection, positionsHistory });
   if (!progress || progress.offtrack) return { status: "offtrack" };
   const speedStats = getSpeedStats(positionsHistory, deviceId, activeStartTimes, now);
   const speedMs = speedStats?.averageMs || 0;
   const delta = targetDistance - progress.proj.distanceAlong;
   if (delta <= 0) return { status: "passed" };
-  if (!speedMs || speedMs <= 0) return { status: "unknown" };
-  const arrival = new Date(now + (delta / speedMs) * 1000);
-  const interval = computeEtaInterval(delta, speedStats, now);
+  const effectiveSpeed = speedMs > 0 ? speedMs : Math.max(expectedSpeedMs || 0, 0);
+  if (!effectiveSpeed) return { status: "unknown" };
+  const arrival = new Date(now + (delta / effectiveSpeed) * 1000);
+  const interval = speedMs > 0 ? computeEtaInterval(delta, speedStats, now) : null;
   return { status: "eta", arrival, interval };
 }
 

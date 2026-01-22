@@ -1,3 +1,8 @@
+import { getRouteDistances, getRoutePoints } from "./route.js";
+import { ACTIVE_DISTANCE_THRESHOLD, KM_MARKER_BASE_KM } from "./constants.js";
+import { computeElevationTotals } from "./stats.js";
+import { getNowMs } from "./time.js";
+
 const colors = [
   "#ef4444",
   "#8b5cf6",
@@ -17,25 +22,29 @@ const SELECTED_COLOR = {
 const state = {
   config: null,
   t: (k) => k,
-  getParticipant: null,
-  getParticipantHistory: null,
-  getWaypointEta: null,
-  getPointEta: null,
+  computeEta: null,
+  getDeviceProgress: null,
+  getAverageSpeedMs: null,
+  getProgressHistory: null,
   isStale: null,
   formatDateTimeFull: (x) => String(x),
   formatTimeLabel: (x) => String(x),
+  projectOnRoute: null,
   selectDevice: () => {},
   getSelectedDeviceId: () => null,
+  filterDevice: () => true,
   startViewerLocation: null,
   stopViewerLocation: null,
   persistToggles: () => {},
   persistPanels: () => {},
   getPanelPreferences: () => ({}),
-  participants: null,
+  devices: null,
+  lastSeen: null,
+  lastPositions: null,
+  getActiveStartTime: null,
   historyOverlay: null,
   historyOverlayDeviceId: null,
   routeWaypoints: [],
-  kmMarkers: [],
   trackData: [],
   map: null,
   bounds: null,
@@ -62,8 +71,22 @@ const state = {
   elevationProgressDistance: null,
   elevationEls: null,
   elevationTotals: null,
-  elevationProgressTotals: null,
 };
+
+function formatBatteryValue(position) {
+  if (!position?.attributes) return null;
+  const rawLevel = Number(position.attributes.batteryLevel);
+  if (Number.isFinite(rawLevel)) return `${Math.round(rawLevel)}%`;
+  const rawVoltage = Number(position.attributes.battery);
+  if (Number.isFinite(rawVoltage)) return `${Math.round(rawVoltage * 10) / 10} V`;
+  return null;
+}
+
+function formatBatteryLabel(position) {
+  const value = formatBatteryValue(position);
+  if (!value) return null;
+  return `${state.t("battery")}: ${value}`;
+}
 
 function nextColor(idx) {
   return colors[idx % colors.length];
@@ -365,45 +388,52 @@ function renderElevationProgress() {
     els.progressLabel.textContent = `${Math.round(yVal)} m`;
     els.progressLabel.setAttribute("visibility", "visible");
   }
-  if (els.statsEl && state.elevationTotals && state.elevationProgressTotals) {
+  if (els.statsEl) {
+    const partial = computeElevationTotals(profile, state.elevationProgressDistance);
     const totalGain = Math.round(state.elevationTotals?.gain || 0);
     const totalLoss = Math.round(state.elevationTotals?.loss || 0);
-    const curGain = Math.round(state.elevationProgressTotals?.gain || 0);
-    const curLoss = Math.round(state.elevationProgressTotals?.loss || 0);
+    const curGain = Math.round(partial.gain || 0);
+    const curLoss = Math.round(partial.loss || 0);
     els.statsEl.textContent = `${state.t("gain")} ${curGain}/${totalGain} m • ${state.t("descent")} ${curLoss}/${totalLoss} m`;
   }
 }
 
-export function setElevationProfile(profile, totals = null) {
+export function setElevationProfile(profile) {
   state.elevationProfile = profile;
-  state.elevationTotals = totals || profile?.totals || null;
+  state.elevationTotals = computeElevationTotals(profile, null);
   renderElevationChart();
 }
 
-export function setElevationProgress(distanceAlong, totals = null) {
+export function setElevationProgress(distanceAlong) {
   state.elevationProgressDistance = distanceAlong;
-  state.elevationProgressTotals = totals || null;
   renderElevationProgress();
 }
 
 export function setupVisualization(deps) {
   state.config = deps.config;
   state.t = deps.t;
-  state.getParticipant = deps.getParticipant;
-  state.getParticipantHistory = deps.getParticipantHistory || (() => null);
-  state.getWaypointEta = deps.getWaypointEta || (() => null);
-  state.getPointEta = deps.getPointEta || null;
+  state.computeEta = deps.computeEta;
+  state.getDeviceProgress = deps.getDeviceProgress;
+  state.getAverageSpeedMs = deps.getAverageSpeedMs;
+  state.getProgressHistory = deps.getProgressHistory || (() => null);
   state.isStale = deps.isStale;
+  state.projectOnRoute = deps.projectOnRoute;
   state.formatDateTimeFull = deps.formatDateTimeFull;
   state.formatTimeLabel = deps.formatTimeLabel;
   state.selectDevice = deps.selectDevice;
   state.getSelectedDeviceId = deps.getSelectedDeviceId;
+  state.filterDevice = deps.filterDevice;
   state.startViewerLocation = deps.startViewerLocation || startViewerLocation;
   state.stopViewerLocation = deps.stopViewerLocation || stopViewerLocation;
   state.persistToggles = deps.persistToggles;
   state.persistPanels = deps.persistPanels || (() => {});
   state.getPanelPreferences = deps.getPanelPreferences || (() => ({}));
-  state.participants = deps.participants;
+  state.getMapViewPreference = deps.getMapViewPreference || (() => null);
+  state.persistMapViewPreference = deps.persistMapViewPreference || (() => {});
+  state.devices = deps.devices;
+  state.lastSeen = deps.lastSeen;
+  state.lastPositions = deps.lastPositions;
+  state.getActiveStartTime = deps.getActiveStartTime || null;
 }
 
 function formatEtaIntervalText(eta) {
@@ -460,7 +490,7 @@ function hideHistoryOverlay() {
 
 function showHistoryOverlay(deviceId, { collapsedSections = {}, scrollTop = 0 } = {}) {
   const targetId = deviceId;
-  const hist = state.getParticipantHistory(deviceId);
+  const hist = state.getProgressHistory(deviceId);
   if (!hist) return;
   hideHistoryOverlay();
   state.historyOverlayDeviceId = targetId;
@@ -485,7 +515,7 @@ function showHistoryOverlay(deviceId, { collapsedSections = {}, scrollTop = 0 } 
   titleText.textContent = state.t("historyTitle");
   const updated = document.createElement("span");
   updated.className = "history-updated";
-  updated.textContent = `(${state.t("historyUpdated")} ${formatTimeOnly(Date.now())})`;
+  updated.textContent = `(${state.t("historyUpdated")} ${formatTimeOnly(getNowMs())})`;
   title.append(titleText, updated);
   const close = document.createElement("button");
   close.className = "history-close";
@@ -574,10 +604,32 @@ function showHistoryOverlay(deviceId, { collapsedSections = {}, scrollTop = 0 } 
     setCollapsed(Boolean(initialCollapsed));
     sections.appendChild(block);
   };
-  const kmEvents = hist?.kmEvents || [];
+  const kmWithSpeed = [];
+  const startTime = state.getActiveStartTime ? state.getActiveStartTime(deviceId) : null;
+  const startDist = ACTIVE_DISTANCE_THRESHOLD;
+  const kmDistances = (hist?.distances || []).slice().sort((a, b) => a.distanceAlong - b.distanceAlong);
+  let prevKm = null;
+  kmDistances.forEach((item) => {
+    let speed = null;
+    if (prevKm && Number.isFinite(prevKm.timeMs) && Number.isFinite(item.timeMs)) {
+      const deltaDist = (item.distanceAlong || 0) - (prevKm.distanceAlong || 0);
+      const deltaTime = item.timeMs - prevKm.timeMs;
+      if (deltaDist > 0 && deltaTime > 0) {
+        speed = (deltaDist / (deltaTime / 1000)) * 3.6;
+      }
+    } else if (!prevKm && Number.isFinite(startTime) && Number.isFinite(item.timeMs)) {
+      const deltaDist = Math.max((item.distanceAlong || 0) - startDist, 0);
+      const deltaTime = item.timeMs - startTime;
+      if (deltaDist > 0 && deltaTime > 0) {
+        speed = (deltaDist / (deltaTime / 1000)) * 3.6;
+      }
+    }
+    kmWithSpeed.push({ ...item, speedKph: speed });
+    prevKm = item;
+  });
   addSection(
     state.t("historyKm"),
-    kmEvents,
+    kmWithSpeed,
     [state.t("historyKmDistance"), state.t("historyTime"), state.t("historyAvgSpeed")],
     (item, formatTime) => {
       const km = `${Math.round((item.distanceAlong / 1000) * 10) / 10} km`;
@@ -588,7 +640,7 @@ function showHistoryOverlay(deviceId, { collapsedSections = {}, scrollTop = 0 } 
   );
   addSection(
     state.t("historyWp"),
-    hist?.waypointEvents || [],
+    hist?.waypoints || [],
     [state.t("historyWpName"), state.t("historyWpEnter"), state.t("historyWpLeave")],
     (item, formatTime) => {
       const name = item.name || state.t("historyWp");
@@ -599,7 +651,13 @@ function showHistoryOverlay(deviceId, { collapsedSections = {}, scrollTop = 0 } 
     },
     "historyWp"
   );
-  const upcoming = hist?.upcoming || [];
+  const progress = state.getDeviceProgress(deviceId);
+  const currentDist = progress?.proj?.distanceAlong ?? 0;
+  const completedKeys = new Set((hist?.waypoints || []).map((w) => Math.round(w.distanceAlong || 0)));
+  const upcoming = (state.routeWaypoints || []).filter((wp, idx) => {
+    const key = completedKeys.has(Math.round(wp.distanceAlong || 0));
+    return !key && (wp.distanceAlong ?? Infinity) > currentDist;
+  });
   if (upcoming.length) {
     addSection(
       state.t("historyUpcoming"),
@@ -611,9 +669,10 @@ function showHistoryOverlay(deviceId, { collapsedSections = {}, scrollTop = 0 } 
         state.t("historyDistanceTo"),
       ],
       (wp) => {
-        const etaText = formatEtaTimeOnly(wp.eta, formatTimeOnly);
+        const eta = state.computeEta ? state.computeEta(deviceId, wp.distanceAlong) : null;
+        const etaText = formatEtaTimeOnly(eta, formatTimeOnly);
         const km = `${Math.round((wp.distanceAlong / 1000) * 10) / 10} km`;
-        const delta = Math.max(wp.distanceToMeters || 0, 0);
+        const delta = Math.max((wp.distanceAlong ?? 0) - currentDist, 0);
         const toKm = `${Math.round((delta / 1000) * 10) / 10} km`;
         return [wp.name || state.t("historyWp"), etaText, km, toKm];
       },
@@ -662,7 +721,11 @@ export function refreshHistoryOverlay(deviceId = null) {
 }
 
 export function initMap() {
-  state.map = L.map("map", { worldCopyJump: true }).setView([0, 0], 2);
+  const savedView = state.getMapViewPreference ? state.getMapViewPreference() : null;
+  const center = savedView ? [savedView.lat, savedView.lng] : [0, 0];
+  const zoom = savedView?.zoom ?? 2;
+  state.autoFit = !savedView;
+  state.map = L.map("map", { worldCopyJump: true }).setView(center, zoom);
   state.map.createPane("tracksPane");
   state.map.getPane("tracksPane").style.zIndex = "400";
   state.map.createPane("kmPane");
@@ -692,6 +755,16 @@ export function initMap() {
   state.map.on("zoomend", rebuildKmMarkers);
   state.map.on("movestart", () => {
     state.autoFit = false;
+  });
+  state.map.on("moveend", () => {
+    const view = state.map.getCenter();
+    const z = state.map.getZoom();
+    state.persistMapViewPreference({ lat: view.lat, lng: view.lng, zoom: z });
+  });
+  state.map.on("zoomend", () => {
+    const view = state.map.getCenter();
+    const z = state.map.getZoom();
+    state.persistMapViewPreference({ lat: view.lat, lng: view.lng, zoom: z });
   });
   state.map.on("contextmenu", (e) => {
     e.originalEvent.preventDefault();
@@ -736,16 +809,34 @@ export function renderRoute(segments, color = nextColor(state.trackData.length))
   segments.forEach((seg) => seg.forEach((pt) => extendBounds(pt)));
 }
 
-export function rebuildKmMarkers() {
-  if (!state.kmMarkerGroup) return;
-  state.kmMarkerGroup.clearLayers();
-  if (!state.map || !state.config?.showKmMarkers) return;
-  const markers = state.kmMarkers || [];
-  if (!markers.length) return;
-  const color = state.trackData[0]?.color || "#0c8bc7";
-  markers.forEach((point) => {
-    const coord = [point.coord.lat, point.coord.lng];
-    const marker = L.circleMarker(coord, {
+function addKmMarkersForSegments(segments, color, intervalKm) {
+  if (!intervalKm || intervalKm <= 0 || !state.kmMarkerGroup) return;
+  const intervalMeters = intervalKm * 1000;
+  let total = 0;
+  let nextMark = intervalMeters;
+  const points = [];
+  segments.forEach((seg) => {
+    if (seg.length < 2) return;
+    for (let i = 1; i < seg.length; i += 1) {
+      const prev = seg[i - 1];
+      const curr = seg[i];
+      const segDist = L.latLng(prev).distanceTo(curr);
+      const startTotal = total;
+      total += segDist;
+      while (nextMark <= total && segDist > 0) {
+        const ratio = (nextMark - startTotal) / segDist;
+        const pt = [
+          prev[0] + (curr[0] - prev[0]) * ratio,
+          prev[1] + (curr[1] - prev[1]) * ratio,
+        ];
+        points.push({ km: nextMark / 1000, coord: pt });
+        nextMark += intervalMeters;
+      }
+    }
+  });
+
+  points.forEach((point) => {
+    const marker = L.circleMarker(point.coord, {
       radius: 5,
       color,
       weight: 2,
@@ -760,17 +851,30 @@ export function rebuildKmMarkers() {
       offset: [0, -2],
       pane: "kmLabelPane",
     });
-    extendBounds(coord);
+    extendBounds(point.coord);
   });
+}
+
+export function rebuildKmMarkers() {
+  if (!state.kmMarkerGroup) return;
+  state.kmMarkerGroup.clearLayers();
+  if (!state.map || !state.config?.showKmMarkers) return;
+  const base = KM_MARKER_BASE_KM;
+  if (!base || base <= 0) return;
+  const z = state.map.getZoom() || 0;
+  let intervalKm = base * 10;
+  if (z >= 16) intervalKm = base * 0.25;
+  else if (z >= 14) intervalKm = base * 0.5;
+  else if (z >= 12) intervalKm = base;
+  else if (z >= 10) intervalKm = base * 5;
+  if (!intervalKm || intervalKm <= 0) return;
+  if (getRoutePoints().length) {
+    addKmMarkersForSegments(state.trackData[0]?.segments || [], state.trackData[0]?.color || "#0c8bc7", intervalKm);
+  }
 }
 
 export function setRouteWaypoints(wps) {
   state.routeWaypoints = wps || [];
-}
-
-export function setKmMarkers(markers) {
-  state.kmMarkers = markers || [];
-  rebuildKmMarkers();
 }
 
 export function renderWaypoints() {
@@ -803,10 +907,11 @@ export function renderWaypoints() {
       icon: makeIcon(wp.name),
     }).addTo(state.waypointGroup);
     markerLayers.push(marker);
+    const eta = state.computeEta && state.getSelectedDeviceId()
+      ? state.computeEta(state.getSelectedDeviceId(), wp.distanceAlong)
+      : null;
+    const etaText = formatEtaText(eta);
     marker.on("click", () => {
-      const selectedId = state.getSelectedDeviceId ? state.getSelectedDeviceId() : null;
-      const eta = selectedId ? state.getWaypointEta(selectedId, wp.id) : null;
-      const etaText = formatEtaText(eta?.eta);
       const idx = state.routeWaypoints.indexOf(wp);
       const next = idx >= 0 && idx < state.routeWaypoints.length - 1 ? state.routeWaypoints[idx + 1] : null;
       const nextLabel = next ? next.name : "Finish";
@@ -852,31 +957,28 @@ function ensureLegend() {
 
 export function renderLegend() {
   const body = ensureLegend();
-  if (!body || !state.participants) return;
+  if (!body || !state.devices) return;
   body.innerHTML = "";
-  const entries = Array.from(state.participants.values());
-  entries.forEach((participant) => {
+  const deviceEntries = Array.from(state.devices.values()).filter((d) => state.filterDevice(d.id));
+  deviceEntries.forEach((device) => {
     const item = document.createElement("div");
     item.className = "legend-item";
     const btn = document.createElement("button");
     btn.className = "legend-btn";
-    btn.dataset.deviceId = String(participant.id);
-    if (participant.id === state.getSelectedDeviceId()) btn.classList.add("selected");
+    btn.dataset.deviceId = String(device.id);
+    if (device.id === state.getSelectedDeviceId()) btn.classList.add("selected");
     const dot = document.createElement("span");
-    const dotClasses = ["legend-dot", state.isStale(participant.id) ? "stale" : "live"];
-    if (participant.id === state.getSelectedDeviceId()) dotClasses.push("selected");
+    const dotClasses = ["legend-dot", state.isStale(device.id) ? "stale" : "live"];
+    if (device.id === state.getSelectedDeviceId()) dotClasses.push("selected");
     dot.className = dotClasses.join(" ");
     const label = document.createElement("span");
-    const name = participant.name || `Participant ${participant.id}`;
-    const prog = participant.progress;
+    const name = device.name || `Device ${device.id}`;
+    const prog = state.getDeviceProgress(device.id);
     const offRoute = !prog || prog.offtrack;
     const endpoint = prog?.endpoint;
-    const km =
-      !offRoute && prog?.distanceAlong != null
-        ? `${Math.round((prog.distanceAlong / 1000) * 10) / 10} km`
-        : null;
-    const speedKph = participant.speedKph || 0;
-    const speedText = speedKph > 0 ? `${Math.round(speedKph * 10) / 10} km/h` : null;
+    const km = !offRoute && prog ? `${Math.round((prog.proj.distanceAlong / 1000) * 10) / 10} km` : null;
+    const speedMs = state.getAverageSpeedMs ? state.getAverageSpeedMs(device.id) : 0;
+    const speedText = speedMs > 0 ? `${Math.round(speedMs * 3.6 * 10) / 10} km/h` : null;
     const statusText = offRoute
       ? state.t("offrouteLabel")
       : endpoint === "start"
@@ -892,8 +994,8 @@ export function renderLegend() {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      state.selectDevice(participant.id, { focus: true });
-      focusDevice(participant.id);
+      state.selectDevice(device.id, { focus: true });
+      focusDevice(device.id);
     });
     item.appendChild(btn);
     body.appendChild(item);
@@ -981,7 +1083,7 @@ export function renderToggles() {
 function applyMarkerStyle(deviceId) {
   const marker = state.markers.get(deviceId);
   if (!marker) return;
-  const stale = state.isStale ? state.isStale(deviceId) : false;
+  const stale = state.isStale(deviceId);
   const isSelected = state.getSelectedDeviceId && state.getSelectedDeviceId() === deviceId;
   const color = isSelected ? SELECTED_COLOR.stroke : stale ? "#6b7280" : "#0c8bc7";
   const fillColor = isSelected ? SELECTED_COLOR.fill : stale ? "#9ca3af" : "#0c8bc7";
@@ -995,14 +1097,15 @@ function updateAllMarkerStyles() {
   state.markers.forEach((_marker, id) => applyMarkerStyle(id));
 }
 
-export function updateMarker(participant) {
-  if (!participant?.position) return;
-  const position = participant.position;
-  const participantId = participant.id;
-  const name = participant.name || `Participant ${participantId}`;
+export function updateMarker(position) {
+  if (!state.filterDevice(position.deviceId)) return;
+  const device = state.devices.get(position.deviceId);
+  const name = device?.name || `Device ${position.deviceId}`;
   const time = position.deviceTime || position.fixTime || position.serverTime;
+  if (time) state.lastSeen.set(position.deviceId, time);
+  state.lastPositions.set(position.deviceId, position);
   const coords = [position.latitude, position.longitude];
-  if (!state.markers.has(participantId)) {
+  if (!state.markers.has(position.deviceId)) {
     const marker = L.circleMarker(coords, {
       radius: 8,
       color: "#0c8bc7",
@@ -1011,15 +1114,15 @@ export function updateMarker(participant) {
       pane: "livePane",
     }).addTo(state.map);
     marker.bindTooltip(name);
-    state.markers.set(participantId, marker);
+    state.markers.set(position.deviceId, marker);
   }
-  const marker = state.markers.get(participantId);
+  const marker = state.markers.get(position.deviceId);
   marker.setLatLng(coords);
   marker.bringToFront();
-  const prog = participant.progress;
-  const projPoint = prog?.point;
+  const prog = state.getDeviceProgress(position.deviceId);
+  const projPoint = prog?.proj?.point;
   if (projPoint) {
-    let line = state.projectionLines.get(participantId);
+    let line = state.projectionLines.get(position.deviceId);
     const latlngs = [coords, [projPoint.lat, projPoint.lng]];
     if (!line) {
       line = L.polyline(latlngs, {
@@ -1028,25 +1131,19 @@ export function updateMarker(participant) {
         dashArray: "4 4",
         pane: "livePane",
       }).addTo(state.map);
-      state.projectionLines.set(participantId, line);
+      state.projectionLines.set(position.deviceId, line);
     } else {
       line.setLatLngs(latlngs);
     }
-  } else {
-    const line = state.projectionLines.get(participantId);
-    if (line) {
-      line.remove();
-      state.projectionLines.delete(participantId);
-    }
   }
-  const stale = state.isStale(participantId);
+  const stale = state.isStale(position.deviceId);
   marker.setStyle({
     color: stale ? "#6b7280" : "#0c8bc7",
     fillColor: stale ? "#9ca3af" : "#0c8bc7",
   });
-  applyMarkerStyle(participantId);
-  const speedKph = participant.speedKph || 0;
-  const speed = speedKph ? ` • ${Math.round(speedKph * 10) / 10} km/h` : "";
+  applyMarkerStyle(position.deviceId);
+  const avgMs = state.getAverageSpeedMs(position.deviceId);
+  const speed = avgMs ? ` • ${Math.round(avgMs * 3.6 * 10) / 10} km/h` : "";
   const posLabel =
     prog?.endpoint === "start"
       ? ` • ${state.t("startLabel")}`
@@ -1054,39 +1151,31 @@ export function updateMarker(participant) {
         ? ` • ${state.t("finishLabel")}`
         : "";
   const showHistoryBtn =
-    state.getSelectedDeviceId && state.getSelectedDeviceId() === participantId
-      ? `<br><button class="history-inline-btn" data-history-id="${participantId}">${state.t("historyShow")}</button>`
+    state.getSelectedDeviceId && state.getSelectedDeviceId() === position.deviceId
+      ? `<br><button class="history-inline-btn" data-history-id="${position.deviceId}">${state.t("historyShow")}</button>`
       : "";
-  const content = `${name}${speed}${posLabel}<br><span class="muted">${state.formatDateTimeFull(time) || ""}</span>${showHistoryBtn}`;
+  const batteryLabel = formatBatteryLabel(position);
+  const timeLabel = state.formatDateTimeFull(time) || "";
+  const metaParts = [];
+  if (batteryLabel) metaParts.push(batteryLabel);
+  if (timeLabel) metaParts.push(timeLabel);
+  const metaLine = metaParts.length ? `<br><span class="muted">${metaParts.join(" • ")}</span>` : "";
+  const content = `${name}${speed}${posLabel}${metaLine}${showHistoryBtn}`;
   const popup = marker.getPopup();
   if (popup) {
     popup.setContent(content);
   } else {
     marker.bindPopup(content);
   }
-  if (state.getSelectedDeviceId && state.getSelectedDeviceId() === participantId && prog?.distanceAlong != null) {
-    setElevationProgress(prog.distanceAlong, prog.elevation || null);
+  if (state.getSelectedDeviceId && state.getSelectedDeviceId() === position.deviceId && prog?.proj?.distanceAlong != null) {
+    setElevationProgress(prog.proj.distanceAlong);
   }
   marker.off("popupopen");
   marker.on("popupopen", () => {
-    attachHistoryButton(marker, participantId);
+    attachHistoryButton(marker, position.deviceId);
   });
-  attachHistoryButton(marker, participantId);
+  attachHistoryButton(marker, position.deviceId);
   extendBounds(coords);
-}
-
-export function pruneMarkers(validIds) {
-  const keep = new Set(validIds);
-  state.markers.forEach((marker, id) => {
-    if (keep.has(id)) return;
-    marker.remove();
-    state.markers.delete(id);
-  });
-  state.projectionLines.forEach((line, id) => {
-    if (keep.has(id)) return;
-    line.remove();
-    state.projectionLines.delete(id);
-  });
 }
 
 export function focusDevice(deviceId) {
@@ -1167,23 +1256,16 @@ function showContextMenu(latlng, containerPoint) {
   const x = rect.left + (containerPoint?.x ?? 0);
   const y = rect.top + (containerPoint?.y ?? 0);
   state.contextMenuEl.innerHTML = "";
-  const selectedId = state.getSelectedDeviceId ? state.getSelectedDeviceId() : null;
-  if (selectedId && state.getPointEta) {
-    const info = document.createElement("div");
-    info.className = "context-info";
-    info.textContent = state.t("etaHere", { eta: "..." });
-    state.contextMenuEl.appendChild(info);
-    Promise.resolve(state.getPointEta(selectedId, latlng))
-      .then((data) => {
-        if (!data?.eta) {
-          info.remove();
-          return;
-        }
-        info.textContent = state.t("etaHere", { eta: formatEtaText(data.eta) });
-      })
-      .catch(() => {
-        info.remove();
-      });
+  if (state.getSelectedDeviceId() && getRoutePoints().length && state.projectOnRoute) {
+    const targetProj = state.projectOnRoute(latlng);
+    if (targetProj && !targetProj.offtrack) {
+      const eta = state.computeEta ? state.computeEta(state.getSelectedDeviceId(), targetProj.distanceAlong) : null;
+      const info = document.createElement("div");
+      info.className = "context-info";
+      const etaText = formatEtaText(eta);
+      info.textContent = state.t("etaHere", { eta: etaText });
+      state.contextMenuEl.appendChild(info);
+    }
   }
   const items = [
     {

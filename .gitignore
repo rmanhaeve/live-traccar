@@ -4,6 +4,7 @@ node_modules/
 config.json
 package-lock.json
 vendor/leaflet/
+frontend/vendor/leaflet/
 tracks/manifest.json
 .DS_Store
 *.log
