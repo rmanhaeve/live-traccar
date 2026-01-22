@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import random
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +30,10 @@ def parse_time_ms(value: Optional[str]) -> Optional[int]:
 
 
 class AppState:
+    DEBUG_DEVICE_IDS = [10001, 10002, 10003, 10004, 10005]
+    DEBUG_JITTER_METERS = 5
+    HISTORY_INTERVAL_SECONDS = 5
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self.route_service = RouteService(settings.track_path)
@@ -45,6 +50,7 @@ class AppState:
         self.last_projection: dict[int, dict] = {}
         self.progress_events: dict[int, dict] = {}
         self.history_loaded: set[int] = set()
+        self.debug_state: dict[int, dict] = {}
         self.distance_ticks: list[float] = []
         self.km_markers: list[dict] = []
         self.elevation_totals: dict | None = None
@@ -75,7 +81,10 @@ class AppState:
             if now - self.last_refresh < max(1, self.settings.refresh_seconds):
                 return
             self.last_refresh = now
-            await self._load_traccar_data()
+            if self.settings.debug:
+                self._load_debug_data()
+            else:
+                await self._load_traccar_data()
 
     async def _load_traccar_data(self) -> None:
         devices = await self.traccar.fetch_devices()
@@ -84,6 +93,112 @@ class AppState:
         await self._ensure_histories(devices)
         for pos in positions:
             self._handle_position(pos)
+
+    def _load_debug_data(self) -> None:
+        now_ms = int(time.time() * 1000)
+        device_ids = self.settings.debug_device_id_list or self.DEBUG_DEVICE_IDS
+        self.devices = {
+            device_id: {"id": device_id, "name": f"Debug Participant {idx + 1}"}
+            for idx, device_id in enumerate(device_ids)
+        }
+        positions = self._build_debug_positions(now_ms)
+        for device_id in device_ids:
+            self.history_loaded.add(device_id)
+        for pos in positions:
+            self._handle_position(pos)
+
+    def _build_debug_positions(self, now_ms: int) -> list[dict]:
+        profile = self.route_service.load()
+        total = profile.total or 0
+        points = profile.points or []
+        speed_ms = max((self.settings.debug_speed_kph or 60) / 3.6, 0)
+        base_start_ms = self._parse_debug_start_ms(now_ms)
+        device_ids = self.settings.debug_device_id_list or self.DEBUG_DEVICE_IDS
+        if not total or not points or speed_ms <= 0:
+            return [
+                {
+                    "deviceId": device_id,
+                    "latitude": idx * 0.01,
+                    "longitude": idx * 0.01,
+                    "speed": speed_ms / 0.514444 if speed_ms else 0,
+                    "deviceTime": datetime.now(tz=timezone.utc).isoformat(),
+                }
+                for idx, device_id in enumerate(device_ids)
+            ]
+        results = []
+        for idx, device_id in enumerate(device_ids):
+            state = self.debug_state.get(device_id)
+            if not state:
+                start_ms = self._initial_start_ms_for_device(idx, total, speed_ms, base_start_ms, now_ms, len(device_ids))
+                state = {"start_ms": start_ms}
+                self.debug_state[device_id] = state
+            elapsed_sec = max(0, (now_ms - state["start_ms"]) / 1000)
+            traveled = min(total, speed_ms * elapsed_sec)
+            base_pt = self.route_service.point_at_distance(traveled) or {"lat": points[0]["lat"], "lng": points[0]["lng"]}
+            noisy = self._jitter_point(base_pt)
+            self._ensure_debug_history(device_id, state["start_ms"], now_ms, total, speed_ms)
+            results.append(
+                {
+                    "deviceId": device_id,
+                    "latitude": noisy["lat"],
+                    "longitude": noisy["lng"],
+                    "speed": speed_ms / 0.514444,
+                    "deviceTime": datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc).isoformat(),
+                    "projHintDistanceAlong": traveled,
+                }
+            )
+        return results
+
+    def _jitter_point(self, base: dict) -> dict:
+        theta = random.random() * math.pi * 2
+        r = math.sqrt(random.random()) * self.DEBUG_JITTER_METERS
+        dx = r * math.cos(theta)
+        dy = r * math.sin(theta)
+        lat_scale = 111_000
+        lng_scale = max(math.cos(base["lat"] * math.pi / 180), 1e-6) * lat_scale
+        return {"lat": base["lat"] + dy / lat_scale, "lng": base["lng"] + dx / lng_scale}
+
+    def _ensure_debug_history(self, device_id: int, start_ms: int, now_ms: int, total: float, speed_ms: float) -> None:
+        history = self.positions_history.get(device_id, [])
+        if not history:
+            pt0 = self.route_service.point_at_distance(0) or {"lat": 0.0, "lng": 0.0}
+            history.append({"t": start_ms, "lat": pt0["lat"], "lng": pt0["lng"]})
+        interval_ms = self.HISTORY_INTERVAL_SECONDS * 1000
+        last_t = history[-1]["t"] if history else start_ms
+        t = last_t + interval_ms
+        while t <= now_ms:
+            elapsed_sec = max(0, (t - start_ms) / 1000)
+            dist = min(total, speed_ms * elapsed_sec)
+            pt = self.route_service.point_at_distance(dist) or {"lat": 0.0, "lng": 0.0}
+            history.append({"t": t, "lat": pt["lat"], "lng": pt["lng"]})
+            t += interval_ms
+        self.positions_history[device_id] = history
+
+    def _parse_debug_start_ms(self, now_ms: int) -> int:
+        raw = self.settings.debug_start_time
+        if raw:
+            try:
+                if raw.endswith("Z"):
+                    raw = raw.replace("Z", "+00:00")
+                return int(datetime.fromisoformat(raw).timestamp() * 1000)
+            except Exception:
+                return now_ms
+        return now_ms
+
+    def _initial_start_ms_for_device(
+        self,
+        idx: int,
+        total: float,
+        speed_ms: float,
+        base_start_ms: int,
+        now_ms: int,
+        device_count: int,
+    ) -> int:
+        spacing = total / max(device_count, 1) if total > 0 else 0
+        target_dist = min(total, spacing * idx)
+        offset_ms = (target_dist / speed_ms) * 1000 if speed_ms > 0 else 0
+        est_start = base_start_ms - offset_ms
+        return min(est_start, now_ms)
 
     async def _ensure_histories(self, devices: list[dict]) -> None:
         tasks = []

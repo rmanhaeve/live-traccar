@@ -333,3 +333,22 @@ def test_history_without_data(tmp_path: Path) -> None:
     body = res.json()
     assert body["kmEvents"] == []
     assert body["waypointEvents"] == []
+
+
+def test_debug_participants(tmp_path: Path) -> None:
+    settings = Settings(
+        traccar_url="https://example.com",
+        traccar_token="token",
+        track_file=str(write_gpx(tmp_path)),
+        translation_file="frontend/translations/en.json",
+        weather_enabled=False,
+        refresh_seconds=0,
+        debug=True,
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+    res = client.get("/api/participants")
+    assert res.status_code == 200
+    participants = res.json()["participants"]
+    assert participants
+    assert participants[0]["name"].startswith("Debug Participant")
