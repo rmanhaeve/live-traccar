@@ -4,7 +4,7 @@ import {
   TRANSLATIONS_MAP,
   LANGUAGE_COOKIE,
 } from "./src/constants.js";
-import { buildRouteProfile, projectOnRoute } from "./src/route.js";
+import { buildRouteProfile, projectOnRoute, getRouteTotal } from "./src/route.js";
 import {
   clearNowOverride,
   getNowDate,
@@ -21,7 +21,6 @@ import {
   renderRoute,
   rebuildKmMarkers,
   renderWaypoints,
-  renderLegend,
   renderToggles,
   updateMarker,
   extendBounds,
@@ -30,6 +29,8 @@ import {
   setRouteWaypoints,
   setElevationProfile,
   setElevationProgress,
+  refreshMarkerStyles,
+  focusDevice,
   startViewerLocation as vizStartViewerLocation,
   stopViewerLocation as vizStopViewerLocation,
   updateHelpContent,
@@ -73,6 +74,13 @@ let weatherSummaryEl;
 let weatherUpdatedEl;
 const weatherState = { expanded: false, pending: false };
 let weatherOverlay;
+let participantsToggleEl;
+let participantsOverlayEl;
+let participantsListEl;
+let participantsCountEl;
+let participantsTitleEl;
+let participantsCloseEl;
+let participantsPanelOpen = false;
 const WEATHER_STALE_MS = 10 * 60 * 1000;
 const weatherCache = new Map();
 let initialSelectedParticipantId = null;
@@ -81,6 +89,7 @@ let countdownOverlayDismissed = false;
 const COUNTDOWN_OVERLAY_PREF = "hideCountdownOverlay";
 let initialTimeOverrideMs = null;
 let initialTimeOverrideTicking = true;
+let routeTotalMeters = 0;
 
 const participants = new Map();
 const waypointEtas = new Map();
@@ -514,7 +523,8 @@ async function loadTranslations(preferredLang) {
   updateLangSelector();
   updateHelpContent();
   updateDownloadButtonLabel();
-  renderLegend();
+  updateParticipantsTexts();
+  renderParticipantsPanel();
   renderWaypoints();
   renderToggles();
   updateCountdownOverlayCopy();
@@ -819,16 +829,134 @@ function setupWeatherWidget() {
   }
 }
 
+function setParticipantsExpanded(expanded) {
+  participantsPanelOpen = expanded;
+  if (participantsOverlayEl) {
+    participantsOverlayEl.classList.toggle("hidden", !expanded);
+  }
+  if (participantsToggleEl) {
+    participantsToggleEl.setAttribute("aria-expanded", expanded ? "true" : "false");
+  }
+  if (expanded) renderParticipantsPanel();
+}
+
+function updateParticipantsTexts() {
+  const baseLabel = t("legend");
+  const selectedName = selectedParticipantId ? participants.get(selectedParticipantId)?.name : null;
+  if (participantsToggleEl) {
+    participantsToggleEl.textContent = selectedName ? `${baseLabel}: ${selectedName}` : baseLabel;
+  }
+  if (participantsTitleEl) participantsTitleEl.textContent = t("legend");
+}
+
+function formatParticipantProgress(prog) {
+  if (!prog) return t("unknown");
+  if (prog.offtrack) return t("offrouteLabel");
+  if (prog.endpoint === "start") return t("startLabel");
+  if (prog.endpoint === "finish") return t("finishLabel");
+  const dist = prog?.proj?.distanceAlong;
+  if (!Number.isFinite(dist)) return t("unknown");
+  return `${Math.round((dist / 1000) * 10) / 10} km`;
+}
+
+function getParticipantProgressPercent(prog) {
+  if (!prog) return 0;
+  if (prog.endpoint === "finish") return 1;
+  const dist = prog?.proj?.distanceAlong;
+  if (!Number.isFinite(dist) || !Number.isFinite(routeTotalMeters) || routeTotalMeters <= 0) return 0;
+  return Math.min(1, Math.max(0, dist / routeTotalMeters));
+}
+
+function renderParticipantsPanel() {
+  if (!participantsListEl) return;
+  participantsListEl.innerHTML = "";
+  const list = Array.from(participants.values()).filter((p) => filterDevice(p.id));
+  if (participantsCountEl) participantsCountEl.textContent = list.length ? `${list.length}` : "";
+  if (!list.length) return;
+  const sorted = list.slice().sort((a, b) => {
+    const progA = getDeviceProgress(a.id);
+    const progB = getDeviceProgress(b.id);
+    const distA = progA?.offtrack ? -1 : progA?.proj?.distanceAlong ?? -1;
+    const distB = progB?.offtrack ? -1 : progB?.proj?.distanceAlong ?? -1;
+    return distB - distA;
+  });
+  sorted.forEach((participant) => {
+    const prog = getDeviceProgress(participant.id);
+    const item = document.createElement("div");
+    item.className = "participants-item";
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "participants-row";
+    if (participant.id === selectedParticipantId) row.classList.add("selected");
+    const name = document.createElement("span");
+    name.className = "participants-name";
+    name.textContent = participant.name || `Device ${participant.id}`;
+    const progress = document.createElement("span");
+    progress.className = "participants-progress";
+    progress.textContent = formatParticipantProgress(prog);
+    row.append(name, progress);
+    const bar = document.createElement("div");
+    bar.className = "participants-bar";
+    const fill = document.createElement("div");
+    fill.className = "participants-bar-fill";
+    if (prog?.offtrack) fill.classList.add("offroute");
+    const percent = getParticipantProgressPercent(prog);
+    fill.style.width = `${Math.round(percent * 1000) / 10}%`;
+    bar.appendChild(fill);
+    row.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      selectParticipant(participant.id, { focus: true });
+      focusDevice(participant.id);
+      setParticipantsExpanded(false);
+    });
+    item.append(row, bar);
+    participantsListEl.appendChild(item);
+  });
+}
+
+function setupParticipantsPanel() {
+  participantsToggleEl = document.getElementById("participants-toggle");
+  participantsOverlayEl = document.getElementById("participants-overlay");
+  participantsListEl = document.getElementById("participants-list");
+  participantsCountEl = document.getElementById("participants-count");
+  participantsTitleEl = document.getElementById("participants-title");
+  participantsCloseEl = document.getElementById("participants-close");
+  updateParticipantsTexts();
+  setParticipantsExpanded(false);
+  if (participantsToggleEl) {
+    participantsToggleEl.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setParticipantsExpanded(!participantsPanelOpen);
+    });
+  }
+  if (participantsCloseEl) {
+    participantsCloseEl.addEventListener("click", () => setParticipantsExpanded(false));
+  }
+  if (participantsOverlayEl) {
+    participantsOverlayEl.addEventListener("click", (e) => {
+      if (e.target === participantsOverlayEl) setParticipantsExpanded(false);
+    });
+  }
+  document.addEventListener("keydown", (e) => {
+    if (!participantsPanelOpen) return;
+    if (e.key === "Escape") setParticipantsExpanded(false);
+  });
+}
+
 async function loadRoute() {
   try {
     const data = await fetchJson("/api/route");
     clearRoute();
     buildRouteProfile(data.segments || []);
+    routeTotalMeters = getRouteTotal();
     renderRoute(data.segments, "#0c8bc7");
     setRouteWaypoints(data.waypoints || []);
     setElevationProfile(data.elevationProfile || null);
     renderWaypoints();
     rebuildKmMarkers();
+    renderParticipantsPanel();
     (data.segments || []).forEach((seg) => seg.forEach((pt) => extendBounds(pt)));
     fitToData();
     refreshWeather(true).catch((err) => console.error(err));
@@ -959,7 +1087,8 @@ async function refreshParticipants() {
     if (participant.position) updateMarker(participant.position);
   });
   applySavedSelectedParticipant(list);
-  renderLegend();
+  updateParticipantsTexts();
+  renderParticipantsPanel();
   renderWaypoints();
   fitToData();
   if (!selectedParticipantId && list.length) {
@@ -997,9 +1126,11 @@ async function loadParticipantDetails(participantId) {
 function selectParticipant(participantId, { focus = false } = {}) {
   selectedParticipantId = participantId;
   persistPreferences({ selectedParticipantId: participantId });
-  renderLegend();
+  updateParticipantsTexts();
+  renderParticipantsPanel();
   renderWaypoints();
   renderToggles();
+  refreshMarkerStyles();
   const prog = getDeviceProgress(participantId);
   if (prog?.proj?.distanceAlong != null) {
     setElevationProgress(prog.proj.distanceAlong);
@@ -1057,6 +1188,7 @@ async function bootstrap() {
   setupWeatherWidget();
   initDownloadButton();
   await loadTranslations();
+  setupParticipantsPanel();
   setupDebugTimeControls();
   await loadRoute();
   await startPolling();

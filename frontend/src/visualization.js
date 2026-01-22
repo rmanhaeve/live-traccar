@@ -1097,6 +1097,10 @@ function updateAllMarkerStyles() {
   state.markers.forEach((_marker, id) => applyMarkerStyle(id));
 }
 
+export function refreshMarkerStyles() {
+  updateAllMarkerStyles();
+}
+
 export function updateMarker(position) {
   if (!state.filterDevice(position.deviceId)) return;
   const device = state.devices.get(position.deviceId);

@@ -17,6 +17,7 @@
       <div id="countdown-start" class="countdown-start"></div>
     </div>
     <div class="topbar-actions">
+      <button id="participants-toggle" class="topbar-btn participants-toggle" type="button" aria-expanded="false"></button>
       <div id="debug-time" class="debug-time hidden">
         <label id="debug-time-label" class="debug-time-label" for="debug-time-input"></label>
         <input id="debug-time-input" class="debug-time-input" type="datetime-local">
@@ -66,6 +67,17 @@
         <button id="countdown-overlay-dismiss" class="countdown-overlay-btn primary" type="button"></button>
         <button id="countdown-overlay-never" class="countdown-overlay-btn ghost" type="button"></button>
       </div>
+    </div>
+  </div>
+
+  <div id="participants-overlay" class="participants-overlay hidden" role="dialog" aria-modal="true">
+    <div class="participants-modal">
+      <button id="participants-close" class="participants-close" type="button" aria-label="Close participants overlay">×</button>
+      <div class="participants-panel-header">
+        <span id="participants-title"></span>
+        <span id="participants-count" class="participants-count"></span>
+      </div>
+      <div id="participants-list" class="participants-list"></div>
     </div>
   </div>
 
