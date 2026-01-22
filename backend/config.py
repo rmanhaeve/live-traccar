@@ -30,9 +30,9 @@ class Settings(BaseSettings):
     translation_file: str = Field(default="frontend/translations/en.json")
     weather_enabled: bool = Field(default=True)
     weather_hours: int = Field(default=4)
+    start_time: Optional[str] = Field(default=None)
     debug: bool = Field(default=False)
     debug_speed_kph: int = Field(default=60)
-    debug_start_time: Optional[str] = Field(default=None)
     debug_device_ids: Optional[str] = Field(default=None)
 
     model_config = SettingsConfigDict(env_prefix="APP_")

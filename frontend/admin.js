@@ -24,7 +24,6 @@ const fields = {
   weatherHours: document.getElementById("config-weather-hours"),
   debug: document.getElementById("config-debug"),
   debugSpeedKph: document.getElementById("config-debug-speed"),
-  debugStartTime: document.getElementById("config-debug-start-time"),
   debugDeviceIds: document.getElementById("config-debug-device-ids"),
   trackUpload: document.getElementById("config-track-upload"),
 };
@@ -98,7 +97,6 @@ function fillForm(config) {
   if (fields.weatherHours) fields.weatherHours.value = config.weatherHours ?? "";
   if (fields.debug) fields.debug.checked = Boolean(config.debug);
   if (fields.debugSpeedKph) fields.debugSpeedKph.value = config.debugSpeedKph ?? "";
-  if (fields.debugStartTime) fields.debugStartTime.value = formatDateTimeLocal(config.debugStartTime);
   if (fields.debugDeviceIds) fields.debugDeviceIds.value = formatCsv(config.debugDeviceIds);
 }
 
@@ -120,7 +118,6 @@ function serializeForm() {
     weatherHours: parseNumberInput(fields.weatherHours),
     debug: Boolean(fields.debug?.checked),
     debugSpeedKph: parseNumberInput(fields.debugSpeedKph),
-    debugStartTime: fields.debugStartTime?.value.trim() || null,
     debugDeviceIds: parseCsv(fields.debugDeviceIds?.value || ""),
   };
 }

@@ -91,12 +91,11 @@ body {
 }
 
 .debug-time-input {
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 8px;
-  padding: 6px 8px;
-  background: rgba(255, 255, 255, 0.9);
-  color: #0f172a;
-  font: inherit;
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
 }
 
 .debug-time-btn {
@@ -114,6 +113,22 @@ body {
 .debug-time-btn:hover {
   transform: translateY(-1px);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.debug-time-slider {
+  width: 180px;
+  accent-color: #f7fbff;
+}
+
+.debug-time-value {
+  min-width: 130px;
+  font-size: 0.85rem;
+  color: #f7fbff;
+  opacity: 0.9;
+}
+
+.debug-time-picker {
+  padding: 6px 8px;
 }
 
 .debug-time-toggle {

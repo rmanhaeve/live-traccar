@@ -10,6 +10,7 @@ import {
   getNowDate,
   getNowMs,
   getOverrideTicking,
+  getTimeOverrideBaseMs,
   hasNowOverride,
   setNowOverride,
   setOverrideTicking,
@@ -52,7 +53,9 @@ const countdownOverlayDismissEl = document.getElementById("countdown-overlay-dis
 const countdownOverlayNeverEl = document.getElementById("countdown-overlay-never");
 const debugTimeWrapEl = document.getElementById("debug-time");
 const debugTimeInputEl = document.getElementById("debug-time-input");
-const debugTimeApplyEl = document.getElementById("debug-time-apply");
+const debugTimePickerEl = document.getElementById("debug-time-picker");
+const debugTimeSliderEl = document.getElementById("debug-time-slider");
+const debugTimeValueEl = document.getElementById("debug-time-value");
 const debugTimeToggleEl = document.getElementById("debug-time-toggle");
 const debugTimeToggleStateEl = document.getElementById("debug-time-toggle-state");
 const debugTimeLabelEl = document.getElementById("debug-time-label");
@@ -90,6 +93,7 @@ const COUNTDOWN_OVERLAY_PREF = "hideCountdownOverlay";
 let initialTimeOverrideMs = null;
 let initialTimeOverrideTicking = true;
 let routeTotalMeters = 0;
+const DEBUG_TIME_STEP_MS = 60 * 1000;
 
 const participants = new Map();
 const waypointEtas = new Map();
@@ -99,9 +103,19 @@ const lastSeen = new Map();
 const lastPositions = new Map();
 
 async function fetchJson(path) {
-  const res = await fetch(path, { cache: "no-store" });
+  const res = await fetch(withDebugTimeParam(path), { cache: "no-store" });
   if (!res.ok) throw new Error(`Request failed: ${path}`);
   return res.json();
+}
+
+function withDebugTimeParam(path) {
+  if (!config?.debug || !hasNowOverride()) return path;
+  if (!path.startsWith("/api/")) return path;
+  const nowMs = getNowMs();
+  if (!Number.isFinite(nowMs)) return path;
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set("debugTime", new Date(nowMs).toISOString());
+  return `${url.pathname}${url.search}`;
 }
 
 async function ensureAdminInitialized() {
@@ -255,9 +269,40 @@ function formatDatetimeLocalValue(ms) {
   return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
 }
 
+function getDebugStartMs() {
+  const eventStart = getEventStartMs();
+  return Number.isFinite(eventStart) ? eventStart : null;
+}
+
+function getDebugFinishMs() {
+  const startMs = getDebugStartMs();
+  if (!Number.isFinite(startMs)) return null;
+  if (!Number.isFinite(routeTotalMeters) || routeTotalMeters <= 0) return null;
+  const speedKph = Number(config?.debugSpeedKph ?? DEFAULT_CONFIG.debugSpeedKph ?? 60);
+  const speedMs = Number.isFinite(speedKph) ? speedKph / 3.6 : 0;
+  if (!Number.isFinite(speedMs) || speedMs <= 0) return null;
+  return startMs + (routeTotalMeters / speedMs) * 1000;
+}
+
+function getDebugTimeRange() {
+  const startMs = getDebugStartMs();
+  const endMs = getDebugFinishMs();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  return { startMs, endMs };
+}
+
+function clampDebugTime(ms, range) {
+  if (!range || !Number.isFinite(ms)) return ms;
+  return Math.min(range.endMs, Math.max(range.startMs, ms));
+}
+
 function updateDebugTimeTexts() {
   if (debugTimeLabelEl) debugTimeLabelEl.textContent = t("debugTimeLabel");
-  if (debugTimeApplyEl) debugTimeApplyEl.textContent = t("debugTimeApply");
+  if (debugTimePickerEl) {
+    debugTimePickerEl.textContent = t("debugTimePick");
+    debugTimePickerEl.setAttribute("title", t("debugTimePick"));
+    debugTimePickerEl.setAttribute("aria-label", t("debugTimePick"));
+  }
   if (debugTimeToggleStateEl) {
     const ticking = debugTimeToggleEl ? debugTimeToggleEl.checked : getOverrideTicking();
     debugTimeToggleStateEl.textContent = ticking === false ? t("debugTimeFrozen") : t("debugTimeTicking");
@@ -267,6 +312,41 @@ function updateDebugTimeTexts() {
 function setDebugTimeInputValue(ms) {
   if (!debugTimeInputEl) return;
   debugTimeInputEl.value = formatDatetimeLocalValue(ms);
+}
+
+function setDebugTimeSliderValue(ms) {
+  if (!debugTimeSliderEl) return;
+  const range = getDebugTimeRange();
+  const next = Number.isFinite(ms) ? clampDebugTime(ms, range) : null;
+  if (!Number.isFinite(next)) return;
+  debugTimeSliderEl.value = String(Math.round(next));
+}
+
+function setDebugTimeValueText(ms) {
+  if (!debugTimeValueEl) return;
+  if (!Number.isFinite(ms)) {
+    debugTimeValueEl.textContent = t("unknown");
+    return;
+  }
+  debugTimeValueEl.textContent = formatDateTimeFull(new Date(ms));
+}
+
+function updateDebugTimeRange() {
+  if (!debugTimeSliderEl) return;
+  const range = getDebugTimeRange();
+  if (!range) {
+    debugTimeSliderEl.disabled = true;
+    setDebugTimeValueText(null);
+    return;
+  }
+  debugTimeSliderEl.min = String(Math.round(range.startMs));
+  debugTimeSliderEl.max = String(Math.round(range.endMs));
+  debugTimeSliderEl.step = String(DEBUG_TIME_STEP_MS);
+  debugTimeSliderEl.disabled = false;
+  const baseMs = getTimeOverrideBaseMs();
+  const next = Number.isFinite(baseMs) ? baseMs : range.startMs;
+  setDebugTimeSliderValue(next);
+  setDebugTimeValueText(next);
 }
 
 function updateUrlDebugTimeParams({ timeMs, ticking } = {}) {
@@ -289,19 +369,30 @@ function applyDebugTimeOverride(ms) {
     clearNowOverride();
     return;
   }
+  const range = getDebugTimeRange();
+  const clamped = Number.isFinite(ms) ? clampDebugTime(ms, range) : ms;
   if (!Number.isFinite(ms)) {
     clearNowOverride();
     setDebugTimeInputValue(null);
+    if (range) {
+      const fallback = clampDebugTime(getNowMs(), range);
+      setDebugTimeSliderValue(fallback);
+      setDebugTimeValueText(fallback);
+    } else {
+      setDebugTimeValueText(null);
+    }
     const ticking = debugTimeToggleEl ? debugTimeToggleEl.checked : true;
     if (!ticking) {
       setNowOverride(Date.now(), { ticking: false });
     }
   } else {
     const ticking = debugTimeToggleEl ? debugTimeToggleEl.checked : true;
-    setNowOverride(ms, { ticking });
-    setDebugTimeInputValue(ms);
+    setNowOverride(clamped, { ticking });
+    setDebugTimeInputValue(clamped);
+    setDebugTimeSliderValue(clamped);
+    setDebugTimeValueText(clamped);
   }
-  updateUrlDebugTimeParams({ timeMs: Number.isFinite(ms) ? ms : null, ticking: debugTimeToggleEl ? debugTimeToggleEl.checked : null });
+  updateUrlDebugTimeParams({ timeMs: Number.isFinite(clamped) ? clamped : null, ticking: debugTimeToggleEl ? debugTimeToggleEl.checked : null });
   countdownOverlayDismissed = false;
   refreshCountdownTimer();
   refreshWeather(true).catch((err) => console.error(err));
@@ -317,10 +408,13 @@ function restoreDebugTimeOverride() {
     setNowOverride(initialTimeOverrideMs, { ticking: initialTimeOverrideTicking });
     setDebugTimeInputValue(initialTimeOverrideMs);
     if (debugTimeToggleEl) debugTimeToggleEl.checked = Boolean(initialTimeOverrideTicking);
+    setDebugTimeSliderValue(initialTimeOverrideMs);
+    setDebugTimeValueText(initialTimeOverrideMs);
     return true;
   }
   clearNowOverride();
   setDebugTimeInputValue(null);
+  setDebugTimeValueText(null);
   return false;
 }
 
@@ -566,6 +660,7 @@ function setupDebugTimeControls() {
     clearNowOverride();
     return;
   }
+  updateDebugTimeRange();
   const restored = restoreDebugTimeOverride();
   if (restored) {
     updateUrlDebugTimeParams({
@@ -575,16 +670,18 @@ function setupDebugTimeControls() {
     refreshCountdownTimer();
     refreshWeather(true).catch((err) => console.error(err));
   }
-  if (!debugTimeInputEl) return;
-  if (debugTimeApplyEl) {
-    debugTimeApplyEl.addEventListener("click", () => {
-      const raw = debugTimeInputEl?.value;
-      if (!raw) {
-        applyDebugTimeOverride(null);
-        return;
+  if (debugTimePickerEl && debugTimeInputEl) {
+    debugTimePickerEl.addEventListener("click", () => {
+      const range = getDebugTimeRange();
+      const baseMs = getTimeOverrideBaseMs();
+      const fallback = Number.isFinite(baseMs) ? baseMs : getNowMs();
+      const next = clampDebugTime(fallback, range);
+      debugTimeInputEl.value = formatDatetimeLocalValue(next);
+      if (typeof debugTimeInputEl.showPicker === "function") {
+        debugTimeInputEl.showPicker();
+      } else {
+        debugTimeInputEl.focus();
       }
-      const ms = Date.parse(raw);
-      if (Number.isFinite(ms)) applyDebugTimeOverride(ms);
     });
   }
   if (debugTimeToggleEl) {
@@ -598,11 +695,30 @@ function setupDebugTimeControls() {
       refreshCountdownTimer();
     });
   }
-  debugTimeInputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      debugTimeApplyEl?.click();
-    }
-  });
+  if (debugTimeSliderEl) {
+    debugTimeSliderEl.addEventListener("input", () => {
+      const range = getDebugTimeRange();
+      let ms = Number(debugTimeSliderEl.value);
+      if (!Number.isFinite(ms) && Number.isFinite(debugTimeSliderEl.valueAsNumber)) {
+        ms = debugTimeSliderEl.valueAsNumber;
+      }
+      if (!Number.isFinite(ms) && range) {
+        ms = range.endMs;
+      }
+      if (Number.isFinite(ms)) applyDebugTimeOverride(ms);
+    });
+  }
+  if (debugTimeInputEl) {
+    debugTimeInputEl.addEventListener("change", () => {
+      const raw = debugTimeInputEl?.value;
+      if (!raw) {
+        applyDebugTimeOverride(null);
+        return;
+      }
+      const ms = Date.parse(raw);
+      if (Number.isFinite(ms)) applyDebugTimeOverride(ms);
+    });
+  }
 }
 
 function updateLangSelector() {
@@ -957,6 +1073,7 @@ async function loadRoute() {
     renderWaypoints();
     rebuildKmMarkers();
     renderParticipantsPanel();
+    updateDebugTimeRange();
     (data.segments || []).forEach((seg) => seg.forEach((pt) => extendBounds(pt)));
     fitToData();
     refreshWeather(true).catch((err) => console.error(err));

@@ -43,7 +43,7 @@ function ensureHistory(deviceId, startMs, nowMs, positionsHistory, points, trave
 }
 
 function parseStartMs(config, nowMs) {
-  const raw = config?.debugStartTime || config?.startTime;
+  const raw = config?.startTime;
   const parsed = raw ? Date.parse(raw) : NaN;
   if (Number.isFinite(parsed)) return parsed;
   return nowMs;

@@ -55,7 +55,7 @@
   "countdownOverlayDismiss": "Sluit voor nu",
   "countdownOverlayNever": "Niet meer tonen",
   "debugTimeLabel": "Debugtijd",
-  "debugTimeApply": "Toepassen",
+  "debugTimePick": "Kies tijd",
   "debugTimeTicking": "Tikkend",
   "debugTimeFrozen": "Bevroren"
 }

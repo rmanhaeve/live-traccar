@@ -55,7 +55,7 @@
   "countdownOverlayDismiss": "Stäng för nu",
   "countdownOverlayNever": "Visa inte igen",
   "debugTimeLabel": "Debugtid",
-  "debugTimeApply": "Använd",
+  "debugTimePick": "Välj tid",
   "debugTimeTicking": "Tickande",
   "debugTimeFrozen": "Fryst"
 }

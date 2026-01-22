@@ -36,9 +36,9 @@ All settings are prefixed with `APP_`:
 - `APP_TRANSLATION_FILE`: Translation JSON path (default: `frontend/translations/en.json`)
 - `APP_WEATHER_ENABLED`: Weather panel toggle (default: true)
 - `APP_WEATHER_HOURS`: Forecast rows (default: 4)
+- `APP_START_TIME`: ISO time for the event start (optional)
 - `APP_DEBUG`: Enable fake participants (default: false)
 - `APP_DEBUG_SPEED_KPH`: Speed for fake participants (default: 60)
-- `APP_DEBUG_START_TIME`: ISO time for the debug start (default: now)
 - `APP_DEBUG_DEVICE_IDS`: Comma-separated participant IDs for debug mode (optional)
 
 ## Running locally
@@ -53,7 +53,7 @@ Enable fake participants for demos or when Traccar is unavailable:
 ```bash
 APP_DEBUG=true \
 APP_DEBUG_SPEED_KPH=45 \
-APP_DEBUG_START_TIME=2024-01-01T08:00:00Z \
+APP_START_TIME=2024-01-01T08:00:00Z \
 uvicorn backend.main:app --reload
 ```
 Optional: set `APP_DEBUG_DEVICE_IDS=10001,10002,10003` to override the default IDs.

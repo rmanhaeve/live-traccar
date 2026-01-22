@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import random
 import time
@@ -20,6 +21,8 @@ from .services.route import RouteService
 from .services.traccar import TraccarClient
 from .services.weather import WeatherService
 
+logger = logging.getLogger(__name__)
+
 
 def parse_time_ms(value: Optional[str]) -> Optional[int]:
     if not value:
@@ -30,6 +33,27 @@ def parse_time_ms(value: Optional[str]) -> Optional[int]:
         return int(datetime.fromisoformat(value).timestamp() * 1000)
     except Exception:
         return None
+
+
+def parse_request_time_ms(value: Optional[str]) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        num = float(value)
+    except Exception:
+        return parse_time_ms(value)
+    if num > 1e11:
+        return int(num)
+    if num > 1e9:
+        return int(num * 1000)
+    return parse_time_ms(value)
+
+
+def get_request_now_ms(request: Request, settings: Settings) -> Optional[int]:
+    if not settings.debug:
+        return None
+    raw = request.query_params.get("debugTime")
+    return parse_request_time_ms(raw)
 
 
 CONFIG_TO_SETTINGS = {
@@ -45,9 +69,9 @@ CONFIG_TO_SETTINGS = {
     "trackFile": "track_file",
     "weatherEnabled": "weather_enabled",
     "weatherHours": "weather_hours",
+    "startTime": "start_time",
     "debug": "debug",
     "debugSpeedKph": "debug_speed_kph",
-    "debugStartTime": "debug_start_time",
     "debugDeviceIds": "debug_device_ids",
 }
 
@@ -91,9 +115,8 @@ def build_public_config(settings: Settings, config_data: dict) -> dict:
         "historyHours": config_data.get("historyHours", settings.history_hours),
         "trackFile": str(track_rel),
         "deviceIds": config_data.get("deviceIds"),
-        "startTime": config_data.get("startTime"),
+        "startTime": config_data.get("startTime", settings.start_time),
         "debug": config_data.get("debug", settings.debug),
-        "debugStartTime": config_data.get("debugStartTime", settings.debug_start_time),
         "debugSpeedKph": config_data.get("debugSpeedKph", settings.debug_speed_kph),
         "debugDeviceIds": config_data.get("debugDeviceIds", settings.debug_device_id_list),
     }
@@ -122,10 +145,9 @@ def build_admin_config(settings: Settings, config_data: dict) -> dict:
         "weatherHours": config_data.get("weatherHours", settings.weather_hours),
         "debug": config_data.get("debug", settings.debug),
         "debugSpeedKph": config_data.get("debugSpeedKph", settings.debug_speed_kph),
-        "debugStartTime": config_data.get("debugStartTime", settings.debug_start_time),
         "debugDeviceIds": config_data.get("debugDeviceIds", debug_device_ids),
         "deviceIds": config_data.get("deviceIds"),
-        "startTime": config_data.get("startTime"),
+        "startTime": config_data.get("startTime", settings.start_time),
     }
 
 
@@ -195,17 +217,17 @@ class AppState:
         self.km_markers = self.route_service.km_markers()
         self.elevation_totals = self.route_service.compute_elevation_totals()
 
-    async def refresh(self) -> None:
+    async def refresh(self, now_ms_override: Optional[int] = None) -> None:
         now = time.time()
-        if now - self.last_refresh < max(1, self.settings.refresh_seconds):
+        if now_ms_override is None and now - self.last_refresh < max(1, self.settings.refresh_seconds):
             return
         async with self.refresh_lock:
             now = time.time()
-            if now - self.last_refresh < max(1, self.settings.refresh_seconds):
+            if now_ms_override is None and now - self.last_refresh < max(1, self.settings.refresh_seconds):
                 return
             self.last_refresh = now
             if self.settings.debug:
-                self._load_debug_data()
+                self._load_debug_data(now_ms_override)
             else:
                 await self._load_traccar_data()
 
@@ -217,8 +239,8 @@ class AppState:
         for pos in positions:
             self._handle_position(pos)
 
-    def _load_debug_data(self) -> None:
-        now_ms = int(time.time() * 1000)
+    def _load_debug_data(self, now_ms_override: Optional[int] = None) -> None:
+        now_ms = now_ms_override if now_ms_override is not None else int(time.time() * 1000)
         device_ids = self.settings.debug_device_id_list or self.DEBUG_DEVICE_IDS
         self.devices = {
             device_id: {"id": device_id, "name": f"Debug Participant {idx + 1}"}
@@ -298,7 +320,7 @@ class AppState:
         self.positions_history[device_id] = history
 
     def _parse_debug_start_ms(self, now_ms: int) -> int:
-        raw = self.settings.debug_start_time
+        raw = self.settings.start_time
         if raw:
             try:
                 if raw.endswith("Z"):
@@ -503,9 +525,9 @@ class AppState:
             if entry.get("enterMs") or entry.get("leaveMs"):
                 events["waypoints"][key] = entry
 
-    def build_participants_payload(self) -> dict:
+    def build_participants_payload(self, now_ms: Optional[int] = None) -> dict:
         participants = []
-        now_ms = int(time.time() * 1000)
+        now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
         for device_id, device in self.devices.items():
             pos = self.last_positions.get(device_id)
             if not pos:
@@ -542,10 +564,11 @@ class AppState:
                     "speedKph": speed_kph,
                 }
             )
-        return {"serverTime": datetime.now(tz=timezone.utc).isoformat(), "participants": participants}
+        server_time = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc).isoformat()
+        return {"serverTime": server_time, "participants": participants}
 
-    def build_waypoint_eta_payload(self, participant_id: int) -> dict:
-        now_ms = int(time.time() * 1000)
+    def build_waypoint_eta_payload(self, participant_id: int, now_ms: Optional[int] = None) -> dict:
+        now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
         pos = self.last_positions.get(participant_id)
         history = self.positions_history.get(participant_id, [])
         active_start = self.active_start_times.get(participant_id)
@@ -567,8 +590,8 @@ class AppState:
             )
         return {"waypoints": waypoints_payload}
 
-    def build_history_payload(self, participant_id: int) -> dict:
-        now_ms = int(time.time() * 1000)
+    def build_history_payload(self, participant_id: int, now_ms: Optional[int] = None) -> dict:
+        now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
         self._backfill_progress_from_history(participant_id)
         events = self.progress_events.get(participant_id)
         km_events = []
@@ -634,8 +657,8 @@ class AppState:
             prev = item
         return result
 
-    def build_eta_for_point(self, participant_id: int, lat: float, lng: float) -> dict:
-        now_ms = int(time.time() * 1000)
+    def build_eta_for_point(self, participant_id: int, lat: float, lng: float, now_ms: Optional[int] = None) -> dict:
+        now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
         history = self.positions_history.get(participant_id, [])
         active_start = self.active_start_times.get(participant_id)
         pos = self.last_positions.get(participant_id)
@@ -670,7 +693,6 @@ class AdminConfigPayload(BaseModel):
     weatherHours: Optional[int] = None
     debug: Optional[bool] = None
     debugSpeedKph: Optional[int] = None
-    debugStartTime: Optional[str] = None
     debugDeviceIds: Optional[list[int]] = None
     deviceIds: Optional[list[int]] = None
     startTime: Optional[str] = None
@@ -706,6 +728,13 @@ def create_app(settings: Settings, *, use_config_file: bool = True) -> FastAPI:
         config_data = app.state.config_store.get_config() if app.state.config_enabled else {}
         return build_public_config(current_settings, config_data)
 
+    @app.on_event("startup")
+    async def preload_route() -> None:
+        try:
+            state.ensure_route_loaded()
+        except Exception:
+            logger.warning("Failed to preload route data on startup.", exc_info=True)
+
     @app.get("/api/route")
     async def get_route():
         ensure_route_loaded()
@@ -733,32 +762,37 @@ def create_app(settings: Settings, *, use_config_file: bool = True) -> FastAPI:
         }
 
     @app.get("/api/participants")
-    async def get_participants():
+    async def get_participants(request: Request):
         ensure_route_loaded()
-        await state.refresh()
-        return state.build_participants_payload()
+        now_ms = get_request_now_ms(request, app.state.settings)
+        await state.refresh(now_ms)
+        return state.build_participants_payload(now_ms)
 
     @app.get("/api/participants/{participant_id}/waypoints")
-    async def get_participant_waypoints(participant_id: int):
+    async def get_participant_waypoints(participant_id: int, request: Request):
         ensure_route_loaded()
-        await state.refresh()
-        return state.build_waypoint_eta_payload(participant_id)
+        now_ms = get_request_now_ms(request, app.state.settings)
+        await state.refresh(now_ms)
+        return state.build_waypoint_eta_payload(participant_id, now_ms)
 
     @app.get("/api/participants/{participant_id}/history")
-    async def get_participant_history(participant_id: int):
+    async def get_participant_history(participant_id: int, request: Request):
         ensure_route_loaded()
-        await state.refresh()
-        return state.build_history_payload(participant_id)
+        now_ms = get_request_now_ms(request, app.state.settings)
+        await state.refresh(now_ms)
+        return state.build_history_payload(participant_id, now_ms)
 
     @app.get("/api/participants/{participant_id}/eta")
     async def get_participant_eta(
         participant_id: int,
+        request: Request,
         lat: float = Query(...),
         lng: float = Query(...),
     ):
         ensure_route_loaded()
-        await state.refresh()
-        return state.build_eta_for_point(participant_id, lat, lng)
+        now_ms = get_request_now_ms(request, app.state.settings)
+        await state.refresh(now_ms)
+        return state.build_eta_for_point(participant_id, lat, lng, now_ms)
 
     @app.get("/api/weather")
     async def get_weather(participant_id: Optional[int] = Query(default=None, alias="participantId")):

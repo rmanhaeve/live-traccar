@@ -20,8 +20,10 @@
       <button id="participants-toggle" class="topbar-btn participants-toggle" type="button" aria-expanded="false"></button>
       <div id="debug-time" class="debug-time hidden">
         <label id="debug-time-label" class="debug-time-label" for="debug-time-input"></label>
+        <input id="debug-time-slider" class="debug-time-slider" type="range" min="0" max="0" step="60000">
+        <div id="debug-time-value" class="debug-time-value"></div>
+        <button id="debug-time-picker" class="debug-time-btn debug-time-picker" type="button"></button>
         <input id="debug-time-input" class="debug-time-input" type="datetime-local">
-        <button id="debug-time-apply" class="debug-time-btn" type="button"></button>
         <label class="debug-time-toggle" for="debug-time-toggle">
           <input id="debug-time-toggle" class="debug-time-toggle-input" type="checkbox" checked>
           <span id="debug-time-toggle-state" class="debug-time-toggle-state"></span>
