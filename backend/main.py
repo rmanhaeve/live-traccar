@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -59,6 +59,8 @@ def apply_config_to_settings(settings: Settings, base_settings: Settings, config
         if key not in config_data:
             continue
         value = config_data[key]
+        if isinstance(value, str) and value.strip() == "":
+            continue
         if attr in {"track_file", "translation_file"} and isinstance(value, str):
             path = Path(value)
             if not path.is_absolute():
@@ -790,6 +792,15 @@ def create_app(settings: Settings, *, use_config_file: bool = True) -> FastAPI:
             raise HTTPException(status_code=401, detail="Unauthorized")
         return token
 
+    def list_track_files() -> list[str]:
+        tracks_dir = ROOT_DIR / "frontend" / "tracks"
+        if not tracks_dir.exists():
+            return []
+        files = []
+        for path in tracks_dir.glob("*.gpx"):
+            files.append(f"tracks/{path.name}")
+        return sorted(files)
+
     @app.get("/api/admin/status")
     async def admin_status(request: Request):
         token = request.cookies.get("admin_session")
@@ -845,6 +856,33 @@ def create_app(settings: Settings, *, use_config_file: bool = True) -> FastAPI:
             apply_config_to_settings(app.state.settings, app.state.base_settings, app.state.config_store.get_config())
             app.state.app_state.apply_settings(app.state.settings)
         return build_admin_config(app.state.settings, app.state.config_store.get_config())
+
+    @app.get("/api/admin/tracks")
+    async def get_admin_tracks(request: Request):
+        require_admin_session(request)
+        return {"tracks": list_track_files()}
+
+    @app.post("/api/admin/tracks")
+    async def upload_admin_track(request: Request, file: UploadFile = File(...)):
+        require_admin_session(request)
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="Missing filename")
+        name = Path(file.filename).name
+        if not name.lower().endswith(".gpx"):
+            raise HTTPException(status_code=400, detail="Only .gpx files are allowed")
+        tracks_dir = ROOT_DIR / "frontend" / "tracks"
+        tracks_dir.mkdir(parents=True, exist_ok=True)
+        dest = tracks_dir / name
+        try:
+            contents = await file.read()
+            if not contents:
+                raise HTTPException(status_code=400, detail="Empty file")
+            dest.write_bytes(contents)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="Failed to upload track") from exc
+        return {"ok": True, "track": f"tracks/{name}", "tracks": list_track_files()}
 
     frontend_dir = ROOT_DIR / "frontend"
     if frontend_dir.exists():

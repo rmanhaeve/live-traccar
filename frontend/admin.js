@@ -26,6 +26,7 @@ const fields = {
   debugSpeedKph: document.getElementById("config-debug-speed"),
   debugStartTime: document.getElementById("config-debug-start-time"),
   debugDeviceIds: document.getElementById("config-debug-device-ids"),
+  trackUpload: document.getElementById("config-track-upload"),
 };
 
 function setMessage(el, text, isError = false) {
@@ -97,7 +98,7 @@ function fillForm(config) {
   if (fields.weatherHours) fields.weatherHours.value = config.weatherHours ?? "";
   if (fields.debug) fields.debug.checked = Boolean(config.debug);
   if (fields.debugSpeedKph) fields.debugSpeedKph.value = config.debugSpeedKph ?? "";
-  if (fields.debugStartTime) fields.debugStartTime.value = config.debugStartTime || "";
+  if (fields.debugStartTime) fields.debugStartTime.value = formatDateTimeLocal(config.debugStartTime);
   if (fields.debugDeviceIds) fields.debugDeviceIds.value = formatCsv(config.debugDeviceIds);
 }
 
@@ -111,7 +112,7 @@ function serializeForm() {
     historyHours: parseNumberInput(fields.historyHours),
     startTime: fields.startTime?.value || null,
     deviceIds: parseCsv(fields.deviceIds?.value || ""),
-    trackFile: fields.trackFile?.value.trim() || null,
+    trackFile: fields.trackFile?.value || null,
     showViewerLocation: Boolean(fields.showViewerLocation?.checked),
     showKmMarkers: Boolean(fields.showKmMarkers?.checked),
     showWaypoints: Boolean(fields.showWaypoints?.checked),
@@ -122,6 +123,40 @@ function serializeForm() {
     debugStartTime: fields.debugStartTime?.value.trim() || null,
     debugDeviceIds: parseCsv(fields.debugDeviceIds?.value || ""),
   };
+}
+
+function populateTrackOptions(tracks, selected) {
+  if (!fields.trackFile) return;
+  fields.trackFile.innerHTML = "";
+  const emptyOption = document.createElement("option");
+  emptyOption.value = "";
+  emptyOption.textContent = "Select a track";
+  fields.trackFile.appendChild(emptyOption);
+  tracks.forEach((track) => {
+    const option = document.createElement("option");
+    option.value = track;
+    option.textContent = track.replace(/^tracks\//, "");
+    fields.trackFile.appendChild(option);
+  });
+  if (selected && !tracks.includes(selected)) {
+    const option = document.createElement("option");
+    option.value = selected;
+    option.textContent = selected;
+    fields.trackFile.appendChild(option);
+  }
+  fields.trackFile.value = selected || "";
+}
+
+async function loadTracks(selected) {
+  try {
+    const res = await fetch("/api/admin/tracks", { cache: "no-store" });
+    if (!res.ok) return;
+    const body = await res.json();
+    const tracks = Array.isArray(body.tracks) ? body.tracks : [];
+    populateTrackOptions(tracks, selected);
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 async function loadConfig() {
@@ -136,6 +171,7 @@ async function loadConfig() {
     }
     const config = await res.json();
     fillForm(config);
+    await loadTracks(config.trackFile);
     showConfig();
   } catch (err) {
     console.error(err);
@@ -201,6 +237,7 @@ async function handleSave(event) {
     }
     const config = await res.json();
     fillForm(config);
+    await loadTracks(config.trackFile);
     setMessage(configMessage, "Saved.");
   } catch (err) {
     console.error(err);
@@ -220,6 +257,33 @@ async function handleLogout() {
 if (loginForm) loginForm.addEventListener("submit", handleLogin);
 if (configForm) configForm.addEventListener("submit", handleSave);
 if (logoutBtn) logoutBtn.addEventListener("click", handleLogout);
+if (fields.trackUpload) {
+  fields.trackUpload.addEventListener("change", async (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    setMessage(configMessage, "Uploading…");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/admin/tracks", { method: "POST", body: formData });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const detail = body?.detail || "Upload failed.";
+        setMessage(configMessage, detail, true);
+        return;
+      }
+      const body = await res.json();
+      const tracks = Array.isArray(body.tracks) ? body.tracks : [];
+      populateTrackOptions(tracks, body.track);
+      setMessage(configMessage, "Track uploaded.");
+    } catch (err) {
+      console.error(err);
+      setMessage(configMessage, "Upload failed.", true);
+    } finally {
+      fields.trackUpload.value = "";
+    }
+  });
+}
 
 checkStatus().then((ok) => {
   if (!ok) return;

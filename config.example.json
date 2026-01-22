@@ -1,6 +1,6 @@
 {
   "title": "Live Tracker",
-  "trackFile": "tracks/start.gpx",
+  "trackFile": "",
   "traccarUrl": "https://your-traccar.example.com",
   "token": "REPLACE_WITH_API_TOKEN",
   "refreshSeconds": 8,

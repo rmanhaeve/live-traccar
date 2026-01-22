@@ -75,8 +75,12 @@
           <h2>Map assets</h2>
           <label class="admin-field">
             <span>Track file</span>
-            <input id="config-track-file" type="text" placeholder="tracks/track.gpx">
+            <select id="config-track-file"></select>
           </label>
+          <div class="admin-upload">
+            <label class="admin-upload-label" for="config-track-upload">Upload new track</label>
+            <input id="config-track-upload" type="file" accept=".gpx">
+          </div>
         </div>
 
         <div class="admin-section">
@@ -118,8 +122,8 @@
             <input id="config-debug-speed" type="number" min="0" step="1">
           </label>
           <label class="admin-field">
-            <span>Debug start time (ISO)</span>
-            <input id="config-debug-start-time" type="text" placeholder="2025-01-01T08:00:00Z">
+            <span>Debug start time</span>
+            <input id="config-debug-start-time" type="datetime-local">
           </label>
           <label class="admin-field">
             <span>Debug device IDs (comma-separated)</span>
