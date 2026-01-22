@@ -779,6 +779,128 @@ body {
   display: none;
 }
 
+.admin-page {
+  background: radial-gradient(circle at top, #f7fbff, #edf2f9);
+}
+
+.admin-shell {
+  width: 100%;
+  max-width: 920px;
+  margin: 48px auto;
+  padding: 0 16px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.admin-card {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  border: 1px solid #e5e9f0;
+}
+
+.admin-card h1 {
+  margin: 0 0 8px;
+  font-size: 1.6rem;
+}
+
+.admin-card h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.admin-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e9f0;
+}
+
+.admin-section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.admin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.admin-field input {
+  border: 1px solid #d6dce5;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  background: #f9fbff;
+}
+
+.admin-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.admin-btn {
+  border-radius: 10px;
+  padding: 10px 16px;
+  border: 1px solid #d6dce5;
+  background: #0f5faf;
+  color: #f7fbff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  width: fit-content;
+}
+
+.admin-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
+}
+
+.admin-btn.ghost {
+  background: #ffffff;
+  color: #0f5faf;
+}
+
+.admin-message {
+  min-height: 1.2em;
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .admin-shell {
+    margin-top: 32px;
+  }
+
+  .admin-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 .context-menu button {
   display: block;
   width: 100%;

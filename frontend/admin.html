@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Console</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="styles.css?v=1">
+</head>
+<body class="admin-page">
+  <main class="admin-shell">
+    <section class="admin-card" id="admin-login">
+      <h1>Admin login</h1>
+      <p class="muted">Enter the admin password to manage server settings.</p>
+      <form id="login-form" class="admin-form">
+        <label class="admin-field">
+          <span>Password</span>
+          <input id="login-password" type="password" required autocomplete="current-password">
+        </label>
+        <button class="admin-btn primary" type="submit">Log in</button>
+      </form>
+      <div id="login-message" class="admin-message" role="status"></div>
+    </section>
+
+    <section class="admin-card hidden" id="admin-config">
+      <div class="admin-header">
+        <div>
+          <h1>Server configuration</h1>
+          <p class="muted">Update live tracker settings and integrations.</p>
+        </div>
+        <button id="logout-btn" class="admin-btn ghost" type="button">Log out</button>
+      </div>
+      <form id="config-form" class="admin-form">
+        <div class="admin-section">
+          <h2>Traccar</h2>
+          <label class="admin-field">
+            <span>Traccar base URL</span>
+            <input id="config-traccar-url" type="url" placeholder="https://traccar.example.com">
+          </label>
+          <label class="admin-field">
+            <span>API token</span>
+            <input id="config-token" type="password" autocomplete="new-password">
+          </label>
+        </div>
+
+        <div class="admin-section">
+          <h2>Display</h2>
+          <label class="admin-field">
+            <span>Title</span>
+            <input id="config-title" type="text" placeholder="Live Tracker">
+          </label>
+          <label class="admin-field">
+            <span>Refresh seconds</span>
+            <input id="config-refresh-seconds" type="number" min="0" step="1">
+          </label>
+          <label class="admin-field">
+            <span>Stale minutes</span>
+            <input id="config-stale-minutes" type="number" min="0" step="1">
+          </label>
+          <label class="admin-field">
+            <span>History hours</span>
+            <input id="config-history-hours" type="number" min="0" step="1">
+          </label>
+          <label class="admin-field">
+            <span>Event start time</span>
+            <input id="config-start-time" type="datetime-local">
+          </label>
+          <label class="admin-field">
+            <span>Visible device IDs (comma-separated)</span>
+            <input id="config-device-ids" type="text" placeholder="10001,10002">
+          </label>
+        </div>
+
+        <div class="admin-section">
+          <h2>Map assets</h2>
+          <label class="admin-field">
+            <span>Track file</span>
+            <input id="config-track-file" type="text" placeholder="tracks/track.gpx">
+          </label>
+        </div>
+
+        <div class="admin-section">
+          <h2>Options</h2>
+          <label class="admin-toggle">
+            <input id="config-show-viewer" type="checkbox">
+            <span>Show viewer location</span>
+          </label>
+          <label class="admin-toggle">
+            <input id="config-show-km" type="checkbox">
+            <span>Show km markers</span>
+          </label>
+          <label class="admin-toggle">
+            <input id="config-show-waypoints" type="checkbox">
+            <span>Show waypoints</span>
+          </label>
+        </div>
+
+        <div class="admin-section">
+          <h2>Weather</h2>
+          <label class="admin-toggle">
+            <input id="config-weather-enabled" type="checkbox">
+            <span>Enable weather widget</span>
+          </label>
+          <label class="admin-field">
+            <span>Weather hours</span>
+            <input id="config-weather-hours" type="number" min="0" step="1">
+          </label>
+        </div>
+
+        <div class="admin-section">
+          <h2>Debug</h2>
+          <label class="admin-toggle">
+            <input id="config-debug" type="checkbox">
+            <span>Enable debug mode</span>
+          </label>
+          <label class="admin-field">
+            <span>Debug speed (kph)</span>
+            <input id="config-debug-speed" type="number" min="0" step="1">
+          </label>
+          <label class="admin-field">
+            <span>Debug start time (ISO)</span>
+            <input id="config-debug-start-time" type="text" placeholder="2025-01-01T08:00:00Z">
+          </label>
+          <label class="admin-field">
+            <span>Debug device IDs (comma-separated)</span>
+            <input id="config-debug-device-ids" type="text" placeholder="10001,10002">
+          </label>
+        </div>
+
+        <button class="admin-btn primary" type="submit">Save configuration</button>
+      </form>
+      <div id="config-message" class="admin-message" role="status"></div>
+    </section>
+  </main>
+
+  <script type="module" src="admin.js"></script>
+</body>
+</html>

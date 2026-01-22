@@ -8,10 +8,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from .config import ROOT_DIR, Settings
+from .services.admin_auth import AdminAuth
+from .services.config_store import ConfigStore
 from .services.progress import ProgressService, ACTIVE_DISTANCE_THRESHOLD
 from .services.route import RouteService
 from .services.traccar import TraccarClient
@@ -27,6 +30,101 @@ def parse_time_ms(value: Optional[str]) -> Optional[int]:
         return int(datetime.fromisoformat(value).timestamp() * 1000)
     except Exception:
         return None
+
+
+CONFIG_TO_SETTINGS = {
+    "traccarUrl": "traccar_url",
+    "token": "traccar_token",
+    "title": "title",
+    "refreshSeconds": "refresh_seconds",
+    "staleMinutes": "stale_minutes",
+    "historyHours": "history_hours",
+    "showViewerLocation": "show_viewer_location",
+    "showKmMarkers": "show_km_markers",
+    "showWaypoints": "show_waypoints",
+    "trackFile": "track_file",
+    "weatherEnabled": "weather_enabled",
+    "weatherHours": "weather_hours",
+    "debug": "debug",
+    "debugSpeedKph": "debug_speed_kph",
+    "debugStartTime": "debug_start_time",
+    "debugDeviceIds": "debug_device_ids",
+}
+
+
+def apply_config_to_settings(settings: Settings, base_settings: Settings, config_data: dict) -> None:
+    for field in settings.model_fields:
+        setattr(settings, field, getattr(base_settings, field))
+    for key, attr in CONFIG_TO_SETTINGS.items():
+        if key not in config_data:
+            continue
+        value = config_data[key]
+        if attr in {"track_file", "translation_file"} and isinstance(value, str):
+            path = Path(value)
+            if not path.is_absolute():
+                direct = ROOT_DIR / path
+                if not direct.exists():
+                    candidate = ROOT_DIR / "frontend" / path
+                    if candidate.exists():
+                        value = str(candidate.relative_to(ROOT_DIR))
+        if attr == "debug_device_ids" and isinstance(value, list):
+            value = ",".join(str(item) for item in value)
+        setattr(settings, attr, value)
+
+
+def build_public_config(settings: Settings, config_data: dict) -> dict:
+    frontend_root = ROOT_DIR / "frontend"
+    track_rel = (
+        settings.track_path.relative_to(frontend_root)
+        if settings.track_path.is_relative_to(frontend_root)
+        else settings.track_path.name
+    )
+    return {
+        "title": config_data.get("title", settings.title),
+        "refreshSeconds": config_data.get("refreshSeconds", settings.refresh_seconds),
+        "staleMinutes": config_data.get("staleMinutes", settings.stale_minutes),
+        "showViewerLocation": config_data.get("showViewerLocation", settings.show_viewer_location),
+        "showKmMarkers": config_data.get("showKmMarkers", settings.show_km_markers),
+        "showWaypoints": config_data.get("showWaypoints", settings.show_waypoints),
+        "historyHours": config_data.get("historyHours", settings.history_hours),
+        "trackFile": str(track_rel),
+        "deviceIds": config_data.get("deviceIds"),
+        "startTime": config_data.get("startTime"),
+        "debug": config_data.get("debug", settings.debug),
+        "debugStartTime": config_data.get("debugStartTime", settings.debug_start_time),
+        "debugSpeedKph": config_data.get("debugSpeedKph", settings.debug_speed_kph),
+        "debugDeviceIds": config_data.get("debugDeviceIds", settings.debug_device_id_list),
+    }
+
+
+def build_admin_config(settings: Settings, config_data: dict) -> dict:
+    frontend_root = ROOT_DIR / "frontend"
+    track_rel = (
+        settings.track_path.relative_to(frontend_root)
+        if settings.track_path.is_relative_to(frontend_root)
+        else settings.track_path.name
+    )
+    debug_device_ids = settings.debug_device_id_list
+    return {
+        "traccarUrl": config_data.get("traccarUrl", settings.traccar_url),
+        "token": config_data.get("token", settings.traccar_token),
+        "title": config_data.get("title", settings.title),
+        "refreshSeconds": config_data.get("refreshSeconds", settings.refresh_seconds),
+        "staleMinutes": config_data.get("staleMinutes", settings.stale_minutes),
+        "historyHours": config_data.get("historyHours", settings.history_hours),
+        "showViewerLocation": config_data.get("showViewerLocation", settings.show_viewer_location),
+        "showKmMarkers": config_data.get("showKmMarkers", settings.show_km_markers),
+        "showWaypoints": config_data.get("showWaypoints", settings.show_waypoints),
+        "trackFile": config_data.get("trackFile", str(track_rel)),
+        "weatherEnabled": config_data.get("weatherEnabled", settings.weather_enabled),
+        "weatherHours": config_data.get("weatherHours", settings.weather_hours),
+        "debug": config_data.get("debug", settings.debug),
+        "debugSpeedKph": config_data.get("debugSpeedKph", settings.debug_speed_kph),
+        "debugStartTime": config_data.get("debugStartTime", settings.debug_start_time),
+        "debugDeviceIds": config_data.get("debugDeviceIds", debug_device_ids),
+        "deviceIds": config_data.get("deviceIds"),
+        "startTime": config_data.get("startTime"),
+    }
 
 
 class AppState:
@@ -54,6 +152,29 @@ class AppState:
         self.distance_ticks: list[float] = []
         self.km_markers: list[dict] = []
         self.elevation_totals: dict | None = None
+
+    def apply_settings(self, settings: Settings) -> None:
+        self.settings = settings
+        self.route_service = RouteService(settings.track_path)
+        self.progress_service = ProgressService(self.route_service)
+        self.traccar = TraccarClient(settings.traccar_url, settings.traccar_token)
+        self.weather = WeatherService(hours=settings.weather_hours)
+        self._reset_cached_state()
+
+    def _reset_cached_state(self) -> None:
+        self.last_refresh = 0.0
+        self.devices = {}
+        self.last_positions = {}
+        self.last_seen = {}
+        self.positions_history = {}
+        self.active_start_times = {}
+        self.last_projection = {}
+        self.progress_events = {}
+        self.history_loaded = set()
+        self.debug_state = {}
+        self.distance_ticks = []
+        self.km_markers = []
+        self.elevation_totals = None
 
     def _build_distance_ticks(self) -> list[float]:
         total = self.route_service.load().total
@@ -524,10 +645,48 @@ class AppState:
         return {"eta": eta, "snapped": snapped}
 
 
-def create_app(settings: Settings) -> FastAPI:
+class AdminSetupPayload(BaseModel):
+    password: str = Field(min_length=8)
+
+
+class AdminLoginPayload(BaseModel):
+    password: str
+
+
+class AdminConfigPayload(BaseModel):
+    traccarUrl: Optional[str] = None
+    token: Optional[str] = None
+    title: Optional[str] = None
+    refreshSeconds: Optional[int] = None
+    staleMinutes: Optional[int] = None
+    historyHours: Optional[int] = None
+    showViewerLocation: Optional[bool] = None
+    showKmMarkers: Optional[bool] = None
+    showWaypoints: Optional[bool] = None
+    trackFile: Optional[str] = None
+    weatherEnabled: Optional[bool] = None
+    weatherHours: Optional[int] = None
+    debug: Optional[bool] = None
+    debugSpeedKph: Optional[int] = None
+    debugStartTime: Optional[str] = None
+    debugDeviceIds: Optional[list[int]] = None
+    deviceIds: Optional[list[int]] = None
+    startTime: Optional[str] = None
+
+
+def create_app(settings: Settings, *, use_config_file: bool = True) -> FastAPI:
     app = FastAPI()
+    config_store = ConfigStore(ROOT_DIR / "config.json")
+    admin_auth = AdminAuth(config_store)
+    base_settings = settings.model_copy()
+    if use_config_file:
+        apply_config_to_settings(settings, base_settings, config_store.get_config())
     state = AppState(settings)
     app.state.settings = settings
+    app.state.base_settings = base_settings
+    app.state.config_store = config_store
+    app.state.config_enabled = use_config_file
+    app.state.admin_auth = admin_auth
     app.state.app_state = state
 
     def ensure_route_loaded() -> None:
@@ -541,28 +700,9 @@ def create_app(settings: Settings) -> FastAPI:
     @app.get("/api/config")
     async def get_config():
         ensure_route_loaded()
-        frontend_root = ROOT_DIR / "frontend"
-        track_rel = (
-            settings.track_path.relative_to(frontend_root)
-            if settings.track_path.is_relative_to(frontend_root)
-            else settings.track_path.name
-        )
-        translation_rel = (
-            settings.translation_path.relative_to(frontend_root)
-            if settings.translation_path.is_relative_to(frontend_root)
-            else settings.translation_path.name
-        )
-        return {
-            "title": settings.title,
-            "refreshSeconds": settings.refresh_seconds,
-            "staleMinutes": settings.stale_minutes,
-            "showViewerLocation": settings.show_viewer_location,
-            "showKmMarkers": settings.show_km_markers,
-            "showWaypoints": settings.show_waypoints,
-            "historyHours": settings.history_hours,
-            "trackFile": str(track_rel),
-            "translationFile": str(translation_rel),
-        }
+        current_settings = app.state.settings
+        config_data = app.state.config_store.get_config() if app.state.config_enabled else {}
+        return build_public_config(current_settings, config_data)
 
     @app.get("/api/route")
     async def get_route():
@@ -620,7 +760,8 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/api/weather")
     async def get_weather(participant_id: Optional[int] = Query(default=None, alias="participantId")):
-        if not settings.weather_enabled:
+        current_settings = app.state.settings
+        if not current_settings.weather_enabled:
             raise HTTPException(status_code=404, detail="Weather disabled")
         ensure_route_loaded()
         await state.refresh()
@@ -642,6 +783,68 @@ def create_app(settings: Settings) -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=502, detail="Weather unavailable") from exc
         return data
+
+    def require_admin_session(request: Request) -> str:
+        token = request.cookies.get("admin_session")
+        if not app.state.admin_auth.is_authenticated(token):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        return token
+
+    @app.get("/api/admin/status")
+    async def admin_status(request: Request):
+        token = request.cookies.get("admin_session")
+        return {
+            "initialized": app.state.admin_auth.is_initialized(),
+            "authenticated": app.state.admin_auth.is_authenticated(token),
+        }
+
+    @app.post("/api/admin/setup")
+    async def admin_setup(payload: AdminSetupPayload):
+        if app.state.admin_auth.is_initialized():
+            raise HTTPException(status_code=409, detail="Admin already configured")
+        app.state.admin_auth.set_password(payload.password)
+        return {"ok": True}
+
+    @app.post("/api/admin/login")
+    async def admin_login(payload: AdminLoginPayload, response: Response):
+        if not app.state.admin_auth.is_initialized():
+            raise HTTPException(status_code=400, detail="Admin not configured")
+        if not app.state.admin_auth.verify_password(payload.password):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        token = app.state.admin_auth.create_session()
+        response.set_cookie("admin_session", token, httponly=True, samesite="strict")
+        return {"ok": True}
+
+    @app.post("/api/admin/logout")
+    async def admin_logout(request: Request, response: Response):
+        token = request.cookies.get("admin_session")
+        app.state.admin_auth.revoke_session(token)
+        response.delete_cookie("admin_session")
+        return {"ok": True}
+
+    @app.get("/api/admin/config")
+    async def get_admin_config(request: Request):
+        require_admin_session(request)
+        current_settings = app.state.settings
+        config_data = app.state.config_store.get_config()
+        return build_admin_config(current_settings, config_data)
+
+    @app.put("/api/admin/config")
+    async def update_admin_config(payload: AdminConfigPayload, request: Request):
+        require_admin_session(request)
+        updates = payload.model_dump(exclude_unset=True)
+        normalized = {}
+        for key, value in updates.items():
+            if isinstance(value, str):
+                value = value.strip()
+                if value == "":
+                    value = None
+            normalized[key] = value
+        app.state.config_store.update_config(normalized)
+        if app.state.config_enabled:
+            apply_config_to_settings(app.state.settings, app.state.base_settings, app.state.config_store.get_config())
+            app.state.app_state.apply_settings(app.state.settings)
+        return build_admin_config(app.state.settings, app.state.config_store.get_config())
 
     frontend_dir = ROOT_DIR / "frontend"
     if frontend_dir.exists():

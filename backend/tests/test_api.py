@@ -51,7 +51,7 @@ def build_app(tmp_path: Path, weather_enabled: bool = False) -> TestClient:
         weather_enabled=weather_enabled,
         refresh_seconds=0,
     )
-    app = create_app(settings)
+    app = create_app(settings, use_config_file=False)
     state = app.state.app_state
 
     async def fetch_devices():
@@ -155,7 +155,7 @@ def test_participants_stale(tmp_path: Path) -> None:
         refresh_seconds=0,
         stale_minutes=1,
     )
-    app = create_app(settings)
+    app = create_app(settings, use_config_file=False)
     state = app.state.app_state
 
     async def fetch_devices():
@@ -199,7 +199,7 @@ def test_participants_empty(tmp_path: Path) -> None:
         weather_enabled=False,
         refresh_seconds=0,
     )
-    app = create_app(settings)
+    app = create_app(settings, use_config_file=False)
     state = app.state.app_state
 
     async def fetch_devices():
@@ -230,7 +230,7 @@ def test_route_missing_returns_error(tmp_path: Path) -> None:
         weather_enabled=False,
         refresh_seconds=0,
     )
-    app = create_app(settings)
+    app = create_app(settings, use_config_file=False)
     client = TestClient(app)
     res = client.get("/api/route")
     assert res.status_code == 404
@@ -245,7 +245,7 @@ def test_route_invalid_returns_error(tmp_path: Path) -> None:
         weather_enabled=False,
         refresh_seconds=0,
     )
-    app = create_app(settings)
+    app = create_app(settings, use_config_file=False)
     client = TestClient(app)
     res = client.get("/api/route")
     assert res.status_code == 500
@@ -260,7 +260,7 @@ def test_route_no_waypoints_adds_endpoints(tmp_path: Path) -> None:
         weather_enabled=False,
         refresh_seconds=0,
     )
-    app = create_app(settings)
+    app = create_app(settings, use_config_file=False)
     client = TestClient(app)
     res = client.get("/api/route")
     assert res.status_code == 200
@@ -278,7 +278,7 @@ def test_waypoint_eta_without_position(tmp_path: Path) -> None:
         weather_enabled=False,
         refresh_seconds=0,
     )
-    app = create_app(settings)
+    app = create_app(settings, use_config_file=False)
     state = app.state.app_state
 
     async def fetch_devices():
@@ -311,7 +311,7 @@ def test_history_without_data(tmp_path: Path) -> None:
         weather_enabled=False,
         refresh_seconds=0,
     )
-    app = create_app(settings)
+    app = create_app(settings, use_config_file=False)
     state = app.state.app_state
 
     async def fetch_devices():
@@ -345,7 +345,7 @@ def test_debug_participants(tmp_path: Path) -> None:
         refresh_seconds=0,
         debug=True,
     )
-    app = create_app(settings)
+    app = create_app(settings, use_config_file=False)
     client = TestClient(app)
     res = client.get("/api/participants")
     assert res.status_code == 200

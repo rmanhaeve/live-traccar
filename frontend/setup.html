@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Setup</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="styles.css?v=1">
+</head>
+<body class="admin-page">
+  <main class="admin-shell">
+    <section class="admin-card">
+      <h1>Set admin password</h1>
+      <p class="muted">This is the first-time setup for the server. Choose a strong password.</p>
+      <form id="setup-form" class="admin-form">
+        <label class="admin-field">
+          <span>New password</span>
+          <input id="setup-password" type="password" minlength="8" required autocomplete="new-password">
+        </label>
+        <label class="admin-field">
+          <span>Confirm password</span>
+          <input id="setup-confirm" type="password" minlength="8" required autocomplete="new-password">
+        </label>
+        <button class="admin-btn primary" type="submit">Set password</button>
+      </form>
+      <div id="setup-message" class="admin-message" role="status"></div>
+    </section>
+  </main>
+  <script type="module" src="setup.js"></script>
+</body>
+</html>

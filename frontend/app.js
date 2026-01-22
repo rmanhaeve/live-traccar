@@ -95,6 +95,21 @@ async function fetchJson(path) {
   return res.json();
 }
 
+async function ensureAdminInitialized() {
+  try {
+    const res = await fetch("/api/admin/status", { cache: "no-store" });
+    if (!res.ok) return true;
+    const status = await res.json();
+    if (!status.initialized) {
+      window.location.replace("/setup.html");
+      return false;
+    }
+  } catch (err) {
+    console.warn("Admin status check failed", err);
+  }
+  return true;
+}
+
 function parseBoolParam(params, key) {
   if (!params.has(key)) return null;
   const raw = params.get(key);
@@ -482,9 +497,6 @@ async function loadTranslations(preferredLang) {
   if (targetLang && TRANSLATIONS_MAP[targetLang]) {
     path = TRANSLATIONS_MAP[targetLang];
     currentLanguage = targetLang;
-  } else if (config?.translationFile) {
-    path = config.translationFile;
-    currentLanguage = targetLang || "en";
   } else {
     path = TRANSLATIONS_MAP.en || "translations/en.json";
     currentLanguage = "en";
@@ -1012,6 +1024,7 @@ async function startPolling() {
 }
 
 async function bootstrap() {
+  if (!(await ensureAdminInitialized())) return;
   setupVisualization({
     config,
     t,

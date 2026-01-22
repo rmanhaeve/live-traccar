@@ -1,7 +1,6 @@
 {
   "title": "Live Tracker",
   "trackFile": "tracks/start.gpx",
-  "translationFile": "translations/en.json",
   "traccarUrl": "https://your-traccar.example.com",
   "token": "REPLACE_WITH_API_TOKEN",
   "refreshSeconds": 8,
@@ -11,5 +10,7 @@
   "startTime": null,
   "debugStartTime": null,
   "debugSpeedKph": 60,
-  "historyHours": 24
+  "historyHours": 24,
+  "weatherEnabled": true,
+  "weatherHours": 4
 }
