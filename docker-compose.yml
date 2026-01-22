@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  site:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - backend/.env
+    environment:
+      APP_TRACCAR_URL: http://traccar:8082
+    depends_on:
+      - traccar
+    volumes:
+      - /PATH/TO/LIVE-TRACCAR/config.json:/app/config.json
+
+  traccar:
+    image: traccar/traccar:latest
+    ports:
+      - "8082:8082"
+    volumes:
+      - /PATH/TO/TRACCAR-DATA:/opt/traccar/data
